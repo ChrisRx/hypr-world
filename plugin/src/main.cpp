@@ -19,8 +19,11 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <format>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -270,6 +273,34 @@ std::string onHyprctl(eHyprCtlOutputFormat, std::string request) {
     } catch (...) { return "error\n"; }
 }
 
+// A config that asks for the plugin only while it is not loaded has
+// Hyprland unload it on one reload and load it on the next, and every load
+// reloads the config again, each inside the last, until the stack runs out.
+// The load times are kept in the instance's runtime directory, which an
+// unload leaves, and a load that comes too soon after the last few is refused.
+constexpr size_t kLoopLoads  = 5;
+constexpr auto   kLoopWindow = std::chrono::seconds{2};
+
+bool loadingInALoop() {
+    using std::chrono::nanoseconds;
+
+    const auto path = g_pCompositor->m_instancePath + "/hypr-world.loads";
+    const auto now  = std::chrono::steady_clock::now().time_since_epoch();
+
+    std::vector<int64_t> recent;
+    std::ifstream        in{path};
+    for (int64_t loaded; in >> loaded;) {
+        if (now - nanoseconds{loaded} < kLoopWindow)
+            recent.push_back(loaded);
+    }
+    recent.push_back(std::chrono::duration_cast<nanoseconds>(now).count());
+
+    std::ofstream out{path, std::ios::trunc};
+    for (const auto loaded : recent)
+        out << loaded << '\n';
+    return recent.size() >= kLoopLoads;
+}
+
 void teardown() {
     // Input back first, then Hyprland's suspension, then the socket.
     Input::shutdown();
@@ -302,6 +333,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     if (std::string{__hyprland_api_get_hash()} != __hyprland_api_get_client_hash())
         throw std::runtime_error("[hypr-world] built against a different Hyprland");
+
+    if (loadingInALoop()) {
+        notify(g_handle, "loaded and unloaded over and over, not loading again: does the config load it on every reload?", 15000, true);
+        throw std::runtime_error("[hypr-world] load loop");
+    }
 
     try {
         if (!HyprlandAPI::addLuaFunction(g_handle, "hypr_world", "toggle", luaToggle) ||
