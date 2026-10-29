@@ -3,6 +3,7 @@
 {
   lib,
   rustPlatform,
+  makeWrapper,
   pkg-config,
   alsa-lib,
   libgbm,
@@ -37,7 +38,10 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
 
-  nativeBuildInputs = [ pkg-config ];
+  nativeBuildInputs = [
+    pkg-config
+    makeWrapper
+  ];
 
   # libgbm allocates the dmabufs window frames are captured into, and
   # alsa-lib is what the sound plays through (bevy_audio).
@@ -50,8 +54,16 @@ rustPlatform.buildRustPackage {
   # has no copy of: the crates are vendored.
   checkFlags = [ "--skip=materials::tests::yuv_shader_compiles" ];
 
+  # The patchelf has to come first: after wrapProgram, bin/hypr-world is
+  # the shell wrapper and the binary is .hypr-world-wrapped.
+  #
+  # The drivers the app loads are the ones in /run/opengl-driver alone. On
+  # NixOS that is all the loader finds anyway; elsewhere it would also try
+  # the distro's, built against a different glibc.
   postFixup = ''
     patchelf --add-rpath ${lib.makeLibraryPath runtimeLibs} $out/bin/hypr-world
+    wrapProgram $out/bin/hypr-world \
+      --set-default VK_DRIVER_FILES /run/opengl-driver/share/vulkan/icd.d
   '';
 
   meta = {
