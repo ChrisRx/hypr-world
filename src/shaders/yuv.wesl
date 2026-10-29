@@ -1,6 +1,6 @@
 // A window's surface in YUV (NV12, P010): its luma and chroma planes, each
 // sampled through an image of its own, turned into RGB as Hyprland shows
-// them. Hyprland imports a YUV dmabuf through EGL with no colour hints, so
+// them. Hyprland imports a YUV dmabuf through EGL with no color hints, so
 // Mesa's defaults apply: BT.601 coefficients at limited range (luma from 16
 // to 235, chroma from 16 to 240, out of 255). P010's samples sit in the top
 // of 16 bits, so read as unorm they come out at the same scale.
@@ -19,7 +19,7 @@ struct YuvParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var chroma_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var chroma_sampler: sampler;
 
-// Hyprland's RGB is sRGB-encoded, and this target takes linear colours, as
+// Hyprland's RGB is sRGB-encoded, and this target takes linear colors, as
 // an sRGB texture sampled gives them.
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
     let low = c / 12.92;

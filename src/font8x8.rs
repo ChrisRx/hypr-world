@@ -1,4 +1,4 @@
-//! font8x8_basic: 8x8 bitmaps of ASCII 0-127, the font frames are labelled
+//! font8x8_basic: 8x8 bitmaps of ASCII 0-127, the font frames are labeled
 //! with. Row 0 is the top, bit 0 the leftmost pixel. By Daniel Hepper,
 //! after Marcel Sondaar's and IBM's VGA fonts, public domain. Generated from
 //! his font8x8_basic.h.

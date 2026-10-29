@@ -85,10 +85,10 @@ The `world` table. A key below with a dot is a nested table (`room_size =
 | --- | --- | --- |
 | `panorama` | none | Equirectangular image all around the house. `~` is expanded. |
 | `msaa` | 2 | Samples a pixel: 1 (or 0) is off, 2, 4 or 8. |
-| `wall_scale` | 0.35 | A frame is the part of the monitor it shows times this. |
-| `room_size.x`, `.y`, `.z` | 0 | The least inside size of the room, in metres. The house grows past it to fit the frames. |
+| `frame_size` | 5.04 | The monitor's longer side across a frame, in meters, whatever its resolution and scale. |
+| `room_size.x`, `.y`, `.z` | 0 | The least inside size of the room, in meters. The house grows past it to fit the frames. |
 | `player.flying` | false | Fly instead of walking. |
-| `player.move_speed` | 4.0 | Metres a second. |
+| `player.move_speed` | 4.0 | Meters a second. |
 | `player.move_inertia` | 0.05 | Easing of movement. |
 | `player.look_sensitivity` | 0.0025 | Mouse look speed. |
 | `player.look_inertia` | 0.03 | Easing of the look. |
@@ -111,7 +111,7 @@ each exported from the `.blend` beside it:
   from the launcher's back end to its muzzle on screen (`held` in
   src/launcher.rs).
 - `rocket.glb`, a rocket in flight: a capsule 0.25 m long and 7 cm across,
-  unlit orange. Its origin is its centre, and the app moves it by that.
+  unlit orange. Its origin is its center, and the app moves it by that.
 
 In both, Blender's +Y is forward (the launcher's muzzle end, the way a
 rocket flies) and +Z is up. The exporter turns those into Bevy's -Z and +Y.
@@ -187,7 +187,7 @@ instance> hypr-world` says how many windows the plugin shares and how many
 buffers it holds. The session's compositor only starts it and shows it:
 nothing is loaded into the session. The app inside keeps its pipe and log
 in `$XDG_RUNTIME_DIR/hypr-world-nested` (`HYPR_WORLD_DIR`, which the plugin's
-launch, the app and tools/drive.sh honour), so both can run at once, and
+launch, the app and tools/drive.sh honor), so both can run at once, and
 tools/drive.sh's hyprctl follows `HYPRLAND_INSTANCE_SIGNATURE`.
 
 Hyprland 0.56 points the session's systemd and D-Bus activation environment
@@ -204,7 +204,7 @@ how the nested one starts or stops.
 `plugin/nested.sh client [args]` builds and starts examples/surfaces.rs in it,
 floating on its active workspace, its output in
 `$XDG_RUNTIME_DIR/hypr-world-nested/surfaces.log`: a window of a known tree
-of surfaces for the plugin to share. A toplevel in four colours, a subsurface
+of surfaces for the plugin to share. A toplevel in four colors, a subsurface
 above it with a clear left half, and a popup with a half-alpha band that
 reaches 100 px past the toplevel's right and bottom edges, open for 3 s and
 closed for 3 s in turn (`--popup <seconds>`, 0 to keep it open). Each surface
@@ -218,7 +218,7 @@ draws at, unless `--still`.
 | `--shm <parts>` | Shared memory (wl_shm) instead of a linear dmabuf for those parts (`main`, `above`, `below`, `popup`, comma-separated). |
 | `--same` | Draws every frame the same, for screenshots of surfaces in shared memory, which the plugin takes only as they commit. |
 | `--pixel <parts>` | Draws those parts as one pixel each (wp_single_pixel_buffer_v1) stretched by a viewport. |
-| `--yuv <parts>` | Draws those parts as linear NV12 dmabufs, eight colour bars at 75% in BT.601 limited range. |
+| `--yuv <parts>` | Draws those parts as linear NV12 dmabufs, eight color bars at 75% in BT.601 limited range. |
 | `--one-buffer` | Draws each part into one buffer only, waiting for its release. |
 | `--stubborn` | Stays open when asked to close, for trying the launcher's second shot. |
 

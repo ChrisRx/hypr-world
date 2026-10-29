@@ -44,11 +44,11 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-/// The capsule: 0.6 m wide and 1.8 m tall, its centre 0.9 m above the feet.
+/// The capsule: 0.6 m wide and 1.8 m tall, its center 0.9 m above the feet.
 const RADIUS: f32 = 0.3;
 const CYLINDER: f32 = 1.2;
 const HALF_HEIGHT: f32 = 0.9;
-/// The eyes above the capsule's centre, 1.62 m above the feet.
+/// The eyes above the capsule's center, 1.62 m above the feet.
 pub const EYES: f32 = EYE_HEIGHT - HALF_HEIGHT;
 
 pub const GRAVITY: f32 = 14.0;
@@ -56,7 +56,7 @@ pub const GRAVITY: f32 = 14.0;
 const JUMP: f32 = 5.5;
 /// Falling never gets faster than this.
 const TERMINAL: f32 = 40.0;
-/// How far below the capsule's centre the ground still counts as underfoot.
+/// How far below the capsule's center the ground still counts as underfoot.
 const GROUND_PROBE: f32 = 1.05;
 /// Ctrl's speed-up, up and down too.
 const SPRINT: f32 = 2.5;
@@ -71,7 +71,7 @@ const TRACE: f32 = 1e-4;
 const STILL_ANGLE: f32 = 1e-5;
 
 /// The walk bob: its height at full speed, how fast it comes and goes, its
-/// pace per metre walked, and the roll that goes with it.
+/// pace per meter walked, and the roll that goes with it.
 const BOB: f32 = 0.035;
 const BOB_EASE: f32 = 8.0;
 const BOB_PACE: f32 = 6.0;
@@ -114,7 +114,7 @@ impl Default for PlayerSettings {
 /// to sleep once it has stood still for half a second, and anything that
 /// moves it wakes it. Awake on the floor it never quite stands still: the
 /// floor's contact gives a little, by an amount that depends on the step's
-/// length, and the app's steps vary, so the body moves by micrometres every
+/// length, and the app's steps vary, so the body moves by micrometers every
 /// step, and the camera on it with it, a frame drawn each time (redraw.rs).
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
@@ -487,8 +487,8 @@ mod tests {
         app.cleanup();
 
         let shell = app.world_mut().spawn(crate::scene::Shell).id();
-        let block = |centre: Vec3, size: Vec3| {
-            let at = Transform::from_translation(centre).with_scale(size);
+        let block = |center: Vec3, size: Vec3| {
+            let at = Transform::from_translation(center).with_scale(size);
             (
                 ChildOf(shell),
                 RigidBody::Static,
@@ -529,11 +529,11 @@ mod tests {
             .translation;
         assert!(
             (at.y - HALF_HEIGHT).abs() < 0.05,
-            "standing on the floor, centre at {at}"
+            "standing on the floor, center at {at}"
         );
         assert!(
             at.x < 3.0 - RADIUS + 0.02 && at.x > 2.5,
-            "stopped at the wall, centre at {at}"
+            "stopped at the wall, center at {at}"
         );
     }
 
@@ -625,7 +625,7 @@ mod tests {
     /// The camera on the body stays put while the body stands still, after
     /// a landing and after a walk, with steps of any length: the body
     /// asleep, nothing moves it. Awake, the floor would move it by
-    /// micrometres, a different amount for each length of step.
+    /// micrometers, a different amount for each length of step.
     #[test]
     fn standing_still_the_camera_stays_put() {
         use std::time::Duration;

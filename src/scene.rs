@@ -35,7 +35,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<WorkspaceIndex>()
         .init_resource::<House>()
         .insert_resource(GlobalAmbientLight {
-            color: AMBIENT_COLOUR,
+            color: AMBIENT_COLOR,
             brightness: AMBIENT_LEVEL / AMBIENT_RESPONSE / Exposure::default().exposure(),
             ..default()
         })
@@ -168,17 +168,17 @@ const ACCENT: Vec3 = Vec3::new(0.631, 0.945, 0.694);
 /// Linear, as a share of the albedo.
 const AMBIENT_LEVEL: f32 = 0.25;
 /// The old ambient was a little blue.
-const AMBIENT_COLOUR: Color = Color::linear_rgb(0.96, 0.96, 1.08);
+const AMBIENT_COLOR: Color = Color::linear_rgb(0.96, 0.96, 1.08);
 /// Bevy's diffuse ambient per cd/m², before the exposure.
 const AMBIENT_RESPONSE: f32 = 0.452;
 /// Linear, as a share of the albedo, at 1 m per unit of a lamp's
 /// `house::Light::intensity`.
 const LAMP_LEVEL: f32 = 6.5;
 /// The old lamps' warm white, as it came out against the ambient.
-const LAMP_COLOUR: Color = Color::linear_rgb(1.0, 0.935, 0.82);
+const LAMP_COLOR: Color = Color::linear_rgb(1.0, 0.935, 0.82);
 /// No specular to speak of, as before.
 const ROUGHNESS: f32 = 0.9;
-/// Inverse square is far brighter than the old falloff within a metre of a
+/// Inverse square is far brighter than the old falloff within a meter of a
 /// lamp, which only the ceiling is: it takes this share of the light, and
 /// shows `CEILING_LEVEL` of its albedo, linear, where the lamps do not reach.
 const CEILING_SHARE: f32 = 0.3;
@@ -203,7 +203,7 @@ fn surface(albedo: Vec3, share: f32, glow: f32) -> StandardMaterial {
 }
 
 /// A surface the old shader showed `glow` of whatever the light, mixing
-/// albedo·L with the albedo in sRGB. Bevy adds emissive to the lit colour,
+/// albedo·L with the albedo in sRGB. Bevy adds emissive to the lit color,
 /// linear: the two fitted at the old light levels in shade (0.43) and under
 /// a lamp (0.8).
 fn glowing(albedo: Vec3, glow: f32) -> StandardMaterial {
@@ -220,7 +220,7 @@ fn glowing(albedo: Vec3, glow: f32) -> StandardMaterial {
 pub struct House {
     pub layout: Option<Layout>,
     /// Each frame's workspace and the name its label shows. A workspace that
-    /// went while the world was in view leaves its frame vacant, labelled
+    /// went while the world was in view leaves its frame vacant, labeled
     /// with the id, and the spare's label is "+".
     frames: Vec<(Option<Entity>, String)>,
 }
@@ -449,7 +449,7 @@ fn build(
             ChildOf(root),
             Mesh3d(look.cube.clone()),
             MeshMaterial3d(surface.clone()),
-            Transform::from_translation(block.centre()).with_scale(block.size()),
+            Transform::from_translation(block.center()).with_scale(block.size()),
         ));
         if block.solid() {
             // A unit box, scaled with the block like its mesh.
@@ -464,7 +464,7 @@ fn build(
         commands.spawn((
             ChildOf(root),
             PointLight {
-                color: LAMP_COLOUR,
+                color: LAMP_COLOR,
                 intensity: lumens(light.intensity),
                 range,
                 shadow_maps_enabled: false,
@@ -482,7 +482,7 @@ fn build(
             Solid,
             RigidBody::Static,
             Collider::cuboid(size.x, size.y, size.z),
-            Transform::from_translation(glass.centre()),
+            Transform::from_translation(glass.center()),
         ));
     }
 
@@ -551,7 +551,7 @@ fn build(
         };
         let idle = materials.add(label(plain(Vec3::new(0.28, 0.27, 0.26))));
         let lit = materials.add(label(glowing(ACCENT, 0.8)));
-        let (centre, size) = house::label(layout, text.len());
+        let (center, size) = house::label(layout, text.len());
         commands
             .spawn((
                 ChildOf(parent),
@@ -562,7 +562,7 @@ fn build(
                 },
                 Mesh3d(look.quad.clone()),
                 MeshMaterial3d(if on { lit } else { idle }),
-                Transform::from_translation(centre).with_scale(size.extend(1.0)),
+                Transform::from_translation(center).with_scale(size.extend(1.0)),
             ))
             .insert_if(FramePart, || owned);
     }
@@ -609,11 +609,11 @@ fn label_image(text: &str) -> Image {
 
 /// The floor's tile, `BOARDS_TILE`, embedded by `plugin`: oak boards along
 /// x, 18 cm wide and 1.4 m long, every row staggered, each row wrapping round
-/// so that the tile repeats. 200 texels a metre, so a seam is 8 mm.
+/// so that the tile repeats. 200 texels a meter, so a seam is 8 mm.
 const BOARDS: &str = "embedded://hypr_world/textures/floorboards.png";
 const BOARD_WIDTH: f32 = 0.18;
 const BOARD_LENGTH: f32 = 1.4;
-/// The tile's size in metres, x by z, three boards by 28 rows.
+/// The tile's size in meters, x by z, three boards by 28 rows.
 const BOARDS_TILE: Vec2 = Vec2::new(3.0 * BOARD_LENGTH, 28.0 * BOARD_WIDTH);
 
 /// Lights the active workspace's bezel and name.
@@ -656,7 +656,7 @@ mod tests {
     }
 
     /// What the plugin says of its workspaces comes to an entity each, said
-    /// again or renamed in place, labelled by its name or else its id, and
+    /// again or renamed in place, labeled by its name or else its id, and
     /// gone after a reset unless said again.
     #[test]
     fn the_plugins_workspaces_are_entities() {

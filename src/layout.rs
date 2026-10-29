@@ -1,15 +1,13 @@
-//! Where everything goes, as pure functions of the desktop feed. Metres,
-//! y up, the floor at y = 0, the room centred on the origin, 100 logical px
-//! to the metre before `wall_scale`. What hangs on a frame is placed in the
-//! frame's own coordinates (`Frame::pose`).
+//! Where everything goes, as pure functions of the desktop feed. Meters,
+//! y up, the floor at y = 0, the room centered on the origin, the monitor's
+//! longer side `frame_size` across, whatever its pixels. What hangs on a
+//! frame is placed in the frame's own coordinates (`Frame::pose`).
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::math::{Isometry3d, Quat, Rect, Vec2, Vec3};
 use serde::Deserialize;
 
-/// Logical px per metre, before `wall_scale`.
-const PX_PER_M: f32 = 100.0;
 /// The bezel's width around a frame's screen.
 pub const BEZEL: f32 = 0.12;
 /// How far a frame's face stands off the wall.
@@ -43,8 +41,11 @@ pub const FOV_Y: f32 = 65.0 * PI / 180.0;
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// A frame is the part of the monitor it shows times this.
-    pub wall_scale: f32,
+    /// The monitor's longer side across a frame, in meters, so that a
+    /// monitor of more logical px has smaller windows in a frame of the
+    /// same size, as on its screen. A frame that shows less than the whole
+    /// monitor is that much smaller.
+    pub frame_size: f32,
     /// The least inside size: x along the front and back walls, z along the
     /// sides, y up to the ceiling. `{ x, y, z }`, each 0 if left out.
     #[serde(deserialize_with = "xyz")]
@@ -67,7 +68,7 @@ fn xyz<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec3, D::Err
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            wall_scale: 0.35,
+            frame_size: 5.04,
             room_size: Vec3::ZERO,
         }
     }
@@ -112,19 +113,19 @@ pub const WALLS: [Wall; 4] = [
 pub struct Frame {
     pub workspace: i64,
     pub wall: usize,
-    /// The centre of its screen, on the frame's face.
-    pub centre: Vec3,
+    /// The center of its screen, on the frame's face.
+    pub center: Vec3,
     /// Along its wall, from the wall's middle.
     pub along: f32,
 }
 
 impl Frame {
     /// Where the frame hangs, which its workspace's `Transform` is (scene.rs):
-    /// at the centre of its screen, turned so that x runs along its wall to
+    /// at the center of its screen, turned so that x runs along its wall to
     /// the right, y up, and z out into the room. Its parts, windows and
     /// layers are placed in these coordinates (`Layout::seat`).
     pub fn pose(&self) -> Isometry3d {
-        Isometry3d::new(self.centre, Quat::from_rotation_y(WALLS[self.wall].yaw))
+        Isometry3d::new(self.center, Quat::from_rotation_y(WALLS[self.wall].yaw))
     }
 }
 
@@ -133,9 +134,9 @@ pub struct Layout {
     pub half_x: f32,
     pub half_z: f32,
     pub height: f32,
-    /// A frame's screen: the part of the monitor it shows times `wall_scale`.
+    /// A frame's screen: the part of the monitor it shows, in meters.
     pub frame: Vec2,
-    /// Metres per logical px.
+    /// Meters per logical px.
     pub k: f32,
     /// The monitor's logical size.
     pub monitor: Vec2,
@@ -157,7 +158,7 @@ impl Layout {
             Rect::from_corners(Vec2::ZERO, monitor)
         };
 
-        let k = settings.wall_scale / PX_PER_M;
+        let k = settings.frame_size / monitor.max_element();
         let frame = area.size() * k;
 
         // A quarter each, the rest to the front, the back, then the right.
@@ -201,7 +202,7 @@ impl Layout {
 
             for i in 0..n {
                 let along = -total / 2.0 + slot / 2.0 + i as f32 * (slot + GAP);
-                let centre = -wall.normal * plane
+                let center = -wall.normal * plane
                     + wall.right * along
                     + Vec3::Y * (SILL + BEZEL + frame.y / 2.0)
                     + wall.normal * FRAME_DEPTH;
@@ -209,7 +210,7 @@ impl Layout {
                 frames.push(Frame {
                     workspace,
                     wall: index,
-                    centre,
+                    center,
                     along,
                 });
             }
@@ -242,7 +243,7 @@ impl Layout {
     }
 
     /// Where a window with monitor-local box `rect` hangs on its frame, in
-    /// the frame's coordinates (`Frame::pose`): its centre and size. Rank 0
+    /// the frame's coordinates (`Frame::pose`): its center and size. Rank 0
     /// is tiled, then floating windows in stacking order, then the top
     /// layers (the bar, layers.rs), then a fullscreen window, each a little
     /// further out.
@@ -261,7 +262,7 @@ impl Layout {
     }
 
     fn place(&self, rect: Rect, lift: f32) -> (Vec3, Vec2) {
-        // From the middle of the area the frame shows, in metres: 2D's y
+        // From the middle of the area the frame shows, in meters: 2D's y
         // runs down, the frame's up.
         let c = (rect.center() - self.area.center()) * self.k;
         (Vec3::new(c.x, -c.y, lift), rect.size() * self.k)
@@ -269,12 +270,12 @@ impl Layout {
 
     /// The pose from which `frame` fills the screen pixel for pixel, as the
     /// 2D workspace does: (eye, the point it looks at). A frame that shows
-    /// the whole monitor is looked at in its centre.
+    /// the whole monitor is looked at in its center.
     pub fn near_pose(&self, frame: &Frame, zoom: f32) -> (Vec3, Vec3) {
         let wall = WALLS[frame.wall];
         let tan = (FOV_Y / 2.0).tan() / zoom;
         let d = self.monitor / 2.0 - self.area.center();
-        let target = frame.centre + wall.right * d.x * self.k - Vec3::Y * d.y * self.k;
+        let target = frame.center + wall.right * d.x * self.k - Vec3::Y * d.y * self.k;
         let back =
             (self.monitor.y * self.k / (2.0 * tan) + WINDOW_LIFT).min(self.depth(frame.wall) - 0.5);
         (target + wall.normal * back, target)
@@ -290,12 +291,12 @@ impl Layout {
         let wall = WALLS[frame.wall];
         let across = (2.0 * self.half_x).min(2.0 * self.half_z);
         let (near, _) = self.near_pose(frame, 1.0);
-        let back = (near - frame.centre)
+        let back = (near - frame.center)
             .length()
             .max((0.75 * across).min(across - 1.0));
-        let mut eye = frame.centre + wall.normal * back;
+        let mut eye = frame.center + wall.normal * back;
         eye.y = EYE_HEIGHT;
-        (eye, frame.centre)
+        (eye, frame.center)
     }
 }
 
@@ -339,7 +340,7 @@ mod tests {
         close(a.x, b.x) && close(a.y, b.y) && close(a.z, b.z)
     }
 
-    /// 1504x1003 with a 40 px bar on top, five workspaces.
+    /// 1504x1003 with a 40 px bar on top, five workspaces, 5.264 m across.
     #[test]
     fn five_workspaces_with_a_bar() {
         let work = Rect::new(0.0, 40.0, 1504.0, 1003.0);
@@ -347,7 +348,10 @@ mod tests {
             &[1, 2, 3, 4, 5],
             Vec2::new(1504.0, 1003.0),
             work,
-            &Settings::default(),
+            &Settings {
+                frame_size: 5.264,
+                ..Settings::default()
+            },
         );
 
         assert!(close(l.frame.x, 5.264) && close(l.frame.y, 3.3705));
@@ -357,17 +361,17 @@ mod tests {
         assert_eq!(walls, [0, 0, 1, 2, 3]);
 
         let y = 2.35525;
-        assert!(close3(l.frames[0].centre, Vec3::new(-3.252, y, -3.692)));
-        assert!(close3(l.frames[1].centre, Vec3::new(3.252, y, -3.692)));
-        assert!(close3(l.frames[2].centre, Vec3::new(6.944, y, 0.0)));
-        assert!(close3(l.frames[3].centre, Vec3::new(0.0, y, 3.692)));
-        assert!(close3(l.frames[4].centre, Vec3::new(-6.944, y, 0.0)));
+        assert!(close3(l.frames[0].center, Vec3::new(-3.252, y, -3.692)));
+        assert!(close3(l.frames[1].center, Vec3::new(3.252, y, -3.692)));
+        assert!(close3(l.frames[2].center, Vec3::new(6.944, y, 0.0)));
+        assert!(close3(l.frames[3].center, Vec3::new(0.0, y, 3.692)));
+        assert!(close3(l.frames[4].center, Vec3::new(-6.944, y, 0.0)));
 
-        // The right wall's frame: 2.76 m back, aimed 0.07 m above its centre
+        // The right wall's frame: 2.76 m back, aimed 0.07 m above its center
         // (the bar shifts the work area down).
         let right = &l.frames[2];
         let (eye, target) = l.near_pose(right, 1.0);
-        assert!(close3(target, right.centre + Vec3::Y * 0.07));
+        assert!(close3(target, right.center + Vec3::Y * 0.07));
         assert!(close((eye - target).length(), 2.760));
 
         // Three quarters of the room's width back, 5.628 m, not three
@@ -378,10 +382,11 @@ mod tests {
         // A frame on a long wall is looked at from the same distance.
         let front = &l.frames[0];
         let (eye, _) = l.far_pose(front);
-        assert!(close((eye - front.centre).with_y(0.0).length(), 5.628));
+        assert!(close((eye - front.center).with_y(0.0).length(), 5.628));
     }
 
-    /// 1920x1080 with a 30 px bar, four workspaces, one per wall.
+    /// 1920x1080 with a 30 px bar, four workspaces, one per wall, 6.72 m
+    /// across.
     #[test]
     fn four_workspaces_one_per_wall() {
         let work = Rect::new(0.0, 30.0, 1920.0, 1080.0);
@@ -389,7 +394,10 @@ mod tests {
             &[1, 2, 3, 4],
             Vec2::new(1920.0, 1080.0),
             work,
-            &Settings::default(),
+            &Settings {
+                frame_size: 6.72,
+                ..Settings::default()
+            },
         );
 
         assert!(close(l.frame.x, 6.72) && close(l.frame.y, 3.675));
@@ -400,10 +408,10 @@ mod tests {
         let front = &l.frames[0];
         let (eye, target) = l.near_pose(front, 1.0);
         assert!(close(target.y, 2.56) && close(eye.y, 2.56));
-        assert!(close(eye.z - front.centre.z, 2.97));
+        assert!(close(eye.z - front.center.z, 2.97));
 
         let (eye, _) = l.far_pose(front);
-        assert!(close((eye - front.centre).with_y(0.0).length(), 6.72));
+        assert!(close((eye - front.center).with_y(0.0).length(), 6.72));
         assert!(close(eye.y, 1.62));
     }
 
@@ -421,19 +429,19 @@ mod tests {
         for frame in &l.frames {
             let (wall, pose) = (WALLS[frame.wall], frame.pose());
             let to = |local: Vec3| Vec3::from(pose.transform_point(local));
-            assert!(close3(to(Vec3::ZERO), frame.centre), "wall {}", frame.wall);
+            assert!(close3(to(Vec3::ZERO), frame.center), "wall {}", frame.wall);
             assert!(
-                close3(to(Vec3::X), frame.centre + wall.right),
+                close3(to(Vec3::X), frame.center + wall.right),
                 "wall {}",
                 frame.wall
             );
             assert!(
-                close3(to(Vec3::Y), frame.centre + Vec3::Y),
+                close3(to(Vec3::Y), frame.center + Vec3::Y),
                 "wall {}",
                 frame.wall
             );
             assert!(
-                close3(to(Vec3::Z), frame.centre + wall.normal),
+                close3(to(Vec3::Z), frame.center + wall.normal),
                 "wall {}",
                 frame.wall
             );
@@ -445,15 +453,15 @@ mod tests {
         let work = Rect::new(0.0, 0.0, 1000.0, 600.0);
         let l = Layout::new(&[1], Vec2::new(1000.0, 600.0), work, &Settings::default());
 
-        // The whole work area: centred on the frame, the frame's size.
-        let (centre, size) = l.seat(work, 0);
-        assert!(close3(centre, Vec3::Z * 0.005));
+        // The whole work area: centered on the frame, the frame's size.
+        let (center, size) = l.seat(work, 0);
+        assert!(close3(center, Vec3::Z * 0.005));
         assert!(close(size.x, l.frame.x) && close(size.y, l.frame.y));
 
         // The top-left quarter, floating and one rank out.
-        let (centre, _) = l.seat(Rect::new(0.0, 0.0, 500.0, 300.0), 1);
+        let (center, _) = l.seat(Rect::new(0.0, 0.0, 500.0, 300.0), 1);
         assert!(close3(
-            centre,
+            center,
             Vec3::new(-l.frame.x / 4.0, l.frame.y / 4.0, 0.013)
         ));
     }
@@ -467,15 +475,15 @@ mod tests {
         let l = Layout::new(&[1], monitor, area, &Settings::default());
         let frame = &l.frames[0];
 
-        let (centre, size) = l.under(area, false);
+        let (center, size) = l.under(area, false);
         assert!(close(size.x, l.frame.x) && close(size.y, l.frame.y));
-        assert!(centre.z > SCREEN_LIFT && centre.z < WINDOW_LIFT);
+        assert!(center.z > SCREEN_LIFT && center.z < WINDOW_LIFT);
 
-        let (centre, size) = l.seat(Rect::new(0.0, 0.0, 1440.0, 54.0), 1);
-        assert!(close(centre.y, (480.0 - 27.0) * l.k) && close(size.y, 54.0 * l.k));
+        let (center, size) = l.seat(Rect::new(0.0, 0.0, 1440.0, 54.0), 1);
+        assert!(close(center.y, (480.0 - 27.0) * l.k) && close(size.y, 54.0 * l.k));
 
         let (_, target) = l.near_pose(frame, 1.0);
-        assert!(close3(target, frame.centre));
+        assert!(close3(target, frame.center));
     }
 
     #[test]

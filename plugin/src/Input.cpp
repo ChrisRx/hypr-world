@@ -578,7 +578,7 @@ void onAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
 }
 
 // Absolute cursor moves also come from refocusing after a window closes or a
-// workspace changes; cancelled, they cannot move focus under the frozen
+// workspace changes; canceled, they cannot move focus under the frozen
 // cursor while the app has it.
 void onMove(Vector2D, Event::SCallbackInfo& info) {
     if (intercepting())

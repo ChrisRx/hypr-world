@@ -9,7 +9,7 @@
 // `surfaces` line, as long as every one draws into a dmabuf the app said
 // it can sample, or into shared memory in one of those formats (`shm`, the
 // pool attached, which the app copies out and hands back at once), or is
-// a single-pixel buffer (`pixel`, its colour in the line, nothing held).
+// a single-pixel buffer (`pixel`, its color in the line, nothing held).
 // YUV dmabufs (NV12, P010) go on surfaces past the window's own, never on
 // its own. Everything else stays on capture.
 //

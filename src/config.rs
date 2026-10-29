@@ -33,7 +33,7 @@ pub struct WorldConfig {
     /// 0.1 to 0.2 ms a frame.
     #[serde(deserialize_with = "msaa")]
     pub msaa: Msaa,
-    /// `wall_scale` and `room_size` (layout.rs).
+    /// `frame_size` and `room_size` (layout.rs).
     #[serde(flatten)]
     pub layout: layout::Settings,
     /// `player.*` (player.rs).
@@ -88,11 +88,11 @@ impl WorldConfig {
         if let Some((key, value)) = amounts.iter().find(|(_, v)| !(v.is_finite() && *v >= 0.0)) {
             return Err(format!("{key} is {value}, not a number of 0 or more"));
         }
-        // A scale of zero would leave no layout. JSON has no NaN.
-        if config.layout.wall_scale <= 0.0 {
+        // A size of zero would leave no layout. JSON has no NaN.
+        if config.layout.frame_size <= 0.0 {
             return Err(format!(
-                "wall_scale is {}, not more than 0",
-                config.layout.wall_scale
+                "frame_size is {}, not more than 0",
+                config.layout.frame_size
             ));
         }
         Ok(config)
@@ -146,7 +146,7 @@ mod tests {
     fn settings_are_read_over_the_defaults() {
         let config = WorldConfig::from_settings(&json!({
             "msaa": 1,
-            "wall_scale": 0.5,
+            "frame_size": 4,
             "room_size": { "x": 16 },
             "player": { "flying": true, "move_speed": 6 },
             "stats": false,
@@ -156,7 +156,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(config.msaa, Msaa::Off);
-        assert_eq!(config.layout.wall_scale, 0.5);
+        assert_eq!(config.layout.frame_size, 4.0);
         assert_eq!(config.layout.room_size, Vec3::new(16.0, 0.0, 0.0));
         assert!(config.player.flying);
         assert_eq!(config.player.move_speed, 6.0);
@@ -177,7 +177,7 @@ mod tests {
     fn settings_that_make_no_sense_are_refused() {
         for odd in [
             json!({ "msaa": 3 }),
-            json!({ "wall_scale": 0 }),
+            json!({ "frame_size": 0 }),
             json!({ "room_size": { "y": -2 } }),
             json!({ "player": { "flying": "yes" } }),
             json!({ "player": { "move_speed": -4 } }),

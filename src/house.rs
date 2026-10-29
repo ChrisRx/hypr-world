@@ -38,7 +38,7 @@ const LABEL_GAP: f32 = 0.14;
 /// Labels stand this far off the wall.
 const LABEL_LIFT: f32 = 0.006;
 
-/// One ceiling lamp per this many metres of room, at most four a side.
+/// One ceiling lamp per this many meters of room, at most four a side.
 const LIGHT_SPACING: f32 = 5.0;
 const LIGHTS_PER_SIDE: f32 = 4.0;
 
@@ -64,7 +64,7 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn centre(&self) -> Vec3 {
+    pub fn center(&self) -> Vec3 {
         (self.min + self.max) / 2.0
     }
 
@@ -106,7 +106,7 @@ pub struct Shell {
 struct WallFrame {
     normal: Vec3,
     right: Vec3,
-    /// The inside face's distance from the room's centre.
+    /// The inside face's distance from the room's center.
     plane: f32,
     /// Half its length along `a`, corners included.
     extent: f32,
@@ -150,7 +150,7 @@ impl WallFrame {
 }
 
 /// The openings of `wall`, as spans along it: one per stretch of free wall
-/// that is long enough, centred in it.
+/// that is long enough, centered in it.
 fn openings(layout: &Layout, wall: usize, inside: f32) -> Vec<(f32, f32)> {
     let mut used: Vec<(f32, f32)> = layout
         .frames
@@ -243,10 +243,10 @@ pub fn shell(layout: &Layout) -> Shell {
 fn furnish(shell: &mut Shell, layout: &Layout) {
     // The table's middle, clear of both walls.
     let at = Vec3::new(-layout.half_x + 0.7, 0.0, -layout.half_z + 0.6);
-    let mut add = |surface: Surface, centre: Vec3, size: Vec3| {
+    let mut add = |surface: Surface, center: Vec3, size: Vec3| {
         shell.blocks.push(Block {
-            min: at + centre - size / 2.0,
-            max: at + centre + size / 2.0,
+            min: at + center - size / 2.0,
+            max: at + center + size / 2.0,
             surface,
         });
     };
@@ -352,7 +352,7 @@ fn build_wall(shell: &mut Shell, layout: &Layout, wall: usize) {
     }
     slab(shell, cursor, w.extent, 0.0, h);
 
-    // Baseboard and crown moulding, inside corner to inside corner.
+    // Baseboard and crown molding, inside corner to inside corner.
     let inside = (-w.inside, w.inside);
     shell.blocks.push(w.block(
         Surface::Trim,
@@ -376,15 +376,15 @@ pub fn bezel(layout: &Layout) -> (Vec3, Vec3) {
 }
 
 /// Where a frame's label of `len` characters goes, in the frame's
-/// coordinates: centred over the bezel, a hair off the wall. Its centre and
+/// coordinates: centered over the bezel, a hair off the wall. Its center and
 /// size; it faces the room like the frame. Glyphs are at most 4.5 cm a
 /// pixel, smaller when the name would be wider than the bezel.
 pub fn label(layout: &Layout, len: usize) -> (Vec3, Vec2) {
     let len = len.max(1) as f32;
     let pixel = GLYPH_PIXEL.min((layout.frame.x + 2.0 * BEZEL) / (8.0 * len));
     let bottom = layout.frame.y / 2.0 + BEZEL + LABEL_GAP;
-    let centre = Vec3::new(0.0, bottom + 4.0 * pixel, LABEL_LIFT - FRAME_DEPTH);
-    (centre, Vec2::new(8.0 * pixel * len, 8.0 * pixel))
+    let center = Vec3::new(0.0, bottom + 4.0 * pixel, LABEL_LIFT - FRAME_DEPTH);
+    (center, Vec2::new(8.0 * pixel * len, 8.0 * pixel))
 }
 
 #[cfg(test)]
@@ -398,14 +398,18 @@ mod tests {
         (a - b).abs() < 2e-3
     }
 
-    /// A worked example: 1504x1003, a 40 px bar, five workspaces.
+    /// A worked example: 1504x1003, a 40 px bar, five workspaces, 5.264 m
+    /// across.
     fn example() -> Layout {
         let work = Rect::new(0.0, 40.0, 1504.0, 1003.0);
         Layout::new(
             &[1, 2, 3, 4, 5],
             Vec2::new(1504.0, 1003.0),
             work,
-            &Settings::default(),
+            &Settings {
+                frame_size: 5.264,
+                ..Settings::default()
+            },
         )
     }
 
@@ -447,14 +451,14 @@ mod tests {
     #[test]
     fn a_label_sits_over_its_bezel() {
         let l = example();
-        let (centre, size) = label(&l, 1);
+        let (center, size) = label(&l, 1);
         let (bezel_min, bezel_max) = bezel(&l);
 
         assert!(close(size.x, 8.0 * GLYPH_PIXEL) && close(size.y, 8.0 * GLYPH_PIXEL));
-        assert!(close(centre.x, 0.0));
-        assert!(close(centre.y - size.y / 2.0, bezel_max.y + LABEL_GAP));
+        assert!(close(center.x, 0.0));
+        assert!(close(center.y - size.y / 2.0, bezel_max.y + LABEL_GAP));
         // A hair off the wall's face, into the room.
-        assert!(close(centre.z, bezel_min.z + LABEL_LIFT));
+        assert!(close(center.z, bezel_min.z + LABEL_LIFT));
     }
 
     /// The bezel stands round the screen, from the wall to the frame's face.
@@ -468,7 +472,7 @@ mod tests {
         );
         assert!(
             close(min.x + max.x, 0.0) && close(min.y + max.y, 0.0),
-            "centred on the screen"
+            "centered on the screen"
         );
         assert!(
             close(min.z, -FRAME_DEPTH) && close(max.z, 0.0),

@@ -33,18 +33,18 @@ use crate::{
     windows::{DesktopWindow, WindowQuad, crosshair_on},
 };
 
-/// How fast a rocket flies, in metres a second: slow enough to see go.
+/// How fast a rocket flies, in meters a second: slow enough to see go.
 const SPEED: f32 = 14.0;
 /// How long a rocket that hits nothing flies before it is gone.
 const RANGE: Duration = Duration::from_secs(4);
-/// How long an explosion lasts, and how large it grows, in metres across.
+/// How long an explosion lasts, and how large it grows, in meters across.
 const BLAST: Duration = Duration::from_millis(450);
 const BLAST_SIZE: f32 = 0.9;
 /// Where the launcher's ends are, from the eyes, as Quake 3 holds it: large
 /// and close, pointing nearly straight ahead, so that only its muzzle end
 /// shows, coming up from the bottom of the view just right of the middle.
 /// Its back end is behind the eyes, and everything but the last few
-/// centimetres runs below the bottom of the view (0.32 m out the view
+/// centimeters runs below the bottom of the view (0.32 m out the view
 /// reaches 0.2 m down, `FOV_Y`).
 const HELD_BACK: Vec3 = Vec3::new(0.30, -0.30, 0.05);
 const HELD_MUZZLE: Vec3 = Vec3::new(0.08, -0.13, -0.50);
@@ -557,7 +557,7 @@ mod tests {
         };
         window(&mut app, 0xa, Vec3::new(0.0, 1.5, -3.0));
         window(&mut app, 0xb, Vec3::new(4.0, 1.5, -3.0));
-        // A wall across the way to the second window, a metre short of it.
+        // A wall across the way to the second window, a meter short of it.
         app.world_mut().spawn((
             RigidBody::Static,
             Collider::cuboid(1.0, 2.0, 0.2),

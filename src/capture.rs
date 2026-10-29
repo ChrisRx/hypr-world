@@ -153,7 +153,7 @@ impl PixelLayout {
         crate::import::layout_of(format as u32)
     }
 
-    /// Its texture format, as sRGB, so that sampling decodes its colours.
+    /// Its texture format, as sRGB, so that sampling decodes its colors.
     pub fn srgb(self) -> wgpu::TextureFormat {
         match self {
             Self::Bgra => wgpu::TextureFormat::Bgra8UnormSrgb,

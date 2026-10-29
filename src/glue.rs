@@ -1037,7 +1037,7 @@ fn shm(line: &str, file: Option<OwnedFd>) -> (Option<u64>, Option<Event>) {
 }
 
 /// pixel <addr> <sid> <argb>: a surface whose buffer is a single pixel
-/// (wp_single_pixel_buffer_v1), stretched over its box: its colour as
+/// (wp_single_pixel_buffer_v1), stretched over its box: its color as
 /// ARGB8888 in hex, premultiplied as Wayland's buffers are, which in memory
 /// is the one pixel in BGRA order. Nothing is held for it, so no
 /// id and no `done`.
@@ -1347,7 +1347,7 @@ pub fn spawn_hint(
     ));
 }
 
-/// A dot at the centre of the view: what clicks, scroll and hover go to.
+/// A dot at the center of the view: what clicks, scroll and hover go to.
 #[derive(Component)]
 pub struct Crosshair;
 

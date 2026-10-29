@@ -284,7 +284,7 @@ pub fn sync_quads(
             let Some(on) = workspaces.get(frame.workspace) else {
                 continue;
             };
-            let (centre, size) = match layer.level {
+            let (center, size) = match layer.level {
                 Level::Background => layout.under(layer.rect, false),
                 Level::Bottom => layout.under(layer.rect, true),
                 Level::Top => layout.seat(
@@ -292,7 +292,7 @@ pub fn sync_quads(
                     windows::top_rank(windows.iter(), frame.workspace),
                 ),
             };
-            let transform = Transform::from_translation(centre).with_scale(size.extend(1.0));
+            let transform = Transform::from_translation(center).with_scale(size.extend(1.0));
 
             if let Some(&quad) = seated.get(&(entity, frame.workspace))
                 && let Ok((.., mut seat)) = quads.get_mut(quad)

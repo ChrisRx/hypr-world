@@ -223,12 +223,12 @@ impl Equirect {
     }
 
     /// The six faces a skybox takes, as a cube array. A face's texels are
-    /// widest at its centre, 2 / size radians, so a face width / π across
+    /// widest at its center, 2 / size radians, so a face width / π across
     /// keeps all of the panorama's detail (360° / width a pixel): 652 for
     /// one 2048 wide, 10 MB.
     fn cubemap(&self) -> Image {
         let size = ((self.width as f32 / PI).ceil() as usize).max(1);
-        // From -1 to 1 across a face, at a texel's centre.
+        // From -1 to 1 across a face, at a texel's center.
         let across = |i: usize| 2.0 * (i as f32 + 0.5) / size as f32 - 1.0;
 
         let mut data = Vec::with_capacity(size * size * 6 * 4);
@@ -263,10 +263,10 @@ impl Equirect {
         image
     }
 
-    /// The colour seen along `cube`, a direction in the cube's frame. Bevy
+    /// The color seen along `cube`, a direction in the cube's frame. Bevy
     /// looks a skybox up with z turned round, cube maps being left-handed
     /// (`skybox.wesl`), so in the world that is (x, y, -z). The mapping puts
-    /// the image's centre straight ahead at -z, +x three quarters of the way across, the seam
+    /// the image's center straight ahead at -z, +x three quarters of the way across, the seam
     /// behind at +z, the top row overhead.
     fn seen_along(&self, cube: Vec3) -> [u8; 4] {
         let dir = cube * Vec3::new(1.0, 1.0, -1.0);
@@ -366,28 +366,28 @@ mod tests {
     fn the_skybox_shows_the_panorama_where_the_sphere_did() {
         let cubemap = gradient().cubemap();
         let (mid, step) = (cubemap.width() as usize / 2, cubemap.width() as usize / 4);
-        let centre = |face| texel(&cubemap, face, mid, mid);
+        let center = |face| texel(&cubemap, face, mid, mid);
 
-        let [red, green, ..] = centre(4);
+        let [red, green, ..] = center(4);
         assert!(
             red.abs_diff(128) <= 2 && green.abs_diff(64) <= 2,
-            "ahead, the centre: {red} {green}"
+            "ahead, the center: {red} {green}"
         );
         assert!(
-            centre(0)[0].abs_diff(192) <= 2,
+            center(0)[0].abs_diff(192) <= 2,
             "+x, three quarters across: {:?}",
-            centre(0)
+            center(0)
         );
         assert!(
-            centre(1)[0].abs_diff(64) <= 2,
+            center(1)[0].abs_diff(64) <= 2,
             "-x, a quarter across: {:?}",
-            centre(1)
+            center(1)
         );
-        assert!(centre(2)[1] <= 1, "overhead, the top row: {:?}", centre(2));
+        assert!(center(2)[1] <= 1, "overhead, the top row: {:?}", center(2));
         assert!(
-            centre(3)[1] >= 126,
+            center(3)[1] >= 126,
             "underfoot, the bottom row: {:?}",
-            centre(3)
+            center(3)
         );
 
         // Not mirrored: right of ahead is further across, and above it

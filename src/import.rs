@@ -509,7 +509,7 @@ pub enum Yuv {
 }
 
 /// The texture format for `format`, in Vulkan's terms and wgpu's: RGB as
-/// sRGB, so that sampling decodes its colours, and YUV as it is, its two
+/// sRGB, so that sampling decodes its colors, and YUV as it is, its two
 /// planes sampled through views of their own (`plane_image`) and turned
 /// into RGB in the shader (shaders/yuv.wesl).
 fn texture_formats(format: BufferFormat) -> (vk::Format, wgpu::TextureFormat) {

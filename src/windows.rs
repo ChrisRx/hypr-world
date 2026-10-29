@@ -300,8 +300,8 @@ pub fn sync_quads(
             }
             continue;
         };
-        let (centre, size) = layout.seat(window.rect, ranks.get(&entity).copied().unwrap_or(0));
-        let seated = Transform::from_translation(centre).with_scale(size.extend(1.0));
+        let (center, size) = layout.seat(window.rect, ranks.get(&entity).copied().unwrap_or(0));
+        let seated = Transform::from_translation(center).with_scale(size.extend(1.0));
 
         // On another workspace, or new: onto its frame.
         if parents.get(entity).ok().map(ChildOf::parent) != Some(frame) {
@@ -455,7 +455,7 @@ impl WindowQuad {
     /// is, unless a surface below shows through its clear parts. Then cut
     /// out where it is clear rather than blended: a mask stays in the
     /// depth-tested passes, where blending would sort it with its surfaces
-    /// above by their centres, which at a slant can put it over them. A
+    /// above by their centers, which at a slant can put it over them. A
     /// pixel half clear or more is a hole, the rest opaque.
     fn alpha_mode(&self) -> AlphaMode {
         if self.below && self.alpha {
@@ -1023,8 +1023,8 @@ pub fn place_surfaces(
 /// box.
 fn surface_place(rect: Rect, place: i32, size: Vec2) -> Transform {
     let size = size.max(Vec2::ONE);
-    let centre = rect.center() / size - 0.5;
-    Transform::from_xyz(centre.x, -centre.y, layout::SURFACE_LIFT * place as f32)
+    let center = rect.center() / size - 0.5;
+    Transform::from_xyz(center.x, -center.y, layout::SURFACE_LIFT * place as f32)
         .with_scale((rect.size() / size).extend(1.0))
 }
 
@@ -1399,7 +1399,7 @@ impl Sight<'_, '_> {
         if depth <= perspective.near {
             return 1.0;
         }
-        // A quad is a unit square scaled to its size in metres.
+        // A quad is a unit square scaled to its size in meters.
         let size = transform.scale();
         let tall = 2.0 * depth * (perspective.fov / 2.0).tan();
         (size.y / tall).max(size.x / (tall * perspective.aspect_ratio))
@@ -1559,7 +1559,7 @@ pub fn aim(
     mut aimed_frame: ResMut<AimedFrame>,
     mut said: ResMut<AimLine>,
 ) {
-    // The camera's centre ray, where the crosshair is.
+    // The camera's center ray, where the crosshair is.
     let Ok(eye) = places.compute_global_transform(*eye) else {
         return;
     };
@@ -2182,12 +2182,12 @@ mod frames {
 
     /// Where the app hung a tiled window with box `RECT` on `frame` when it
     /// placed everything in room coordinates: along the wall and up from the
-    /// frame's centre by where the window is in 2D, out from it by the
+    /// frame's center by where the window is in 2D, out from it by the
     /// window's lift, and turned to face the room.
     fn hung(layout: &Layout, frame: &layout::Frame) -> Transform {
         let wall = WALLS[frame.wall];
         let c = RECT.center() - layout.area.min;
-        let translation = frame.centre
+        let translation = frame.center
             + wall.right * (c.x - layout.area.width() / 2.0) * layout.k
             + Vec3::Y * (layout.area.height() / 2.0 - c.y) * layout.k
             + wall.normal * 0.005;
@@ -2279,7 +2279,7 @@ mod frames {
         (app, camera)
     }
 
-    /// What the crosshair is on from a metre and a half in front of
+    /// What the crosshair is on from a meter and a half in front of
     /// `window`, looking at its middle.
     fn aimed_from_before(app: &mut App, camera: Entity, window: Entity) -> Option<u64> {
         let place = *app.world().get::<GlobalTransform>(window).expect("a quad");
@@ -2681,7 +2681,7 @@ mod frames {
         app.update();
 
         // The crosshair on the point `at` px from the window's top left, on
-        // its plane, from a metre and a half in front of it.
+        // its plane, from a meter and a half in front of it.
         let size = RECT.size();
         let aim_at = |app: &mut App, at: Vec2| {
             let place = *app.world().get::<GlobalTransform>(window).expect("a quad");

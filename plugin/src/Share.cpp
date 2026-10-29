@@ -65,9 +65,9 @@ struct SSurface {
     // one buffer would wait on it for good. That surface goes to the app
     // with its next commit, its window on capture until then.
     CHLBufferReference latest;
-    // Its newest buffer's colour if that is a single-pixel buffer
+    // Its newest buffer's color if that is a single-pixel buffer
     // (wp_single_pixel_buffer_v1), and whether the app still has to be
-    // told it. Nothing is held for one: the colour goes in the line.
+    // told it. Nothing is held for one: the color goes in the line.
     std::optional<uint32_t> pixel;
     bool                    pixelDue = false;
     // Its newest buffer not sent yet: the socket was busy, or it held all
@@ -144,28 +144,28 @@ bool onePlaneFile(const Aquamarine::SDMABUFAttrs& attrs) {
     return true;
 }
 
-// A single-pixel buffer's colour: shared memory to Hyprland, but with no
+// A single-pixel buffer's color: shared memory to Hyprland, but with no
 // pool behind it, one pixel of ARGB8888 (premultiplied, as the protocol
 // gives it) at its data pointer.
 std::optional<uint32_t> singlePixel(const CHLBufferReference& buffer) {
     if (!buffer || buffer->type() != Aquamarine::BUFFER_TYPE_SHM || buffer->size != Vector2D{1, 1} || buffer->shm().success)
         return std::nullopt;
     const auto [data, format, size] = buffer->beginDataPtr(0);
-    std::optional<uint32_t> colour;
+    std::optional<uint32_t> color;
     if (data && format == DRM_FORMAT_ARGB8888 && size >= 4) {
         uint32_t value = 0;
         std::memcpy(&value, data, 4);
-        colour = value;
+        color = value;
     }
     buffer->endDataPtr();
-    return colour;
+    return color;
 }
 
 // Whether the app can take `buffer` as a surface shows it, not turned (the
 // app draws no buffer transform yet): a dmabuf of a format and modifier it
 // said it samples, its planes in one file, or shared memory in one of those
 // formats, which it copies out. Or a single-pixel buffer, shared memory with
-// no pool behind it, whose colour goes in the line.
+// no pool behind it, whose color goes in the line.
 bool samples(const CHLBufferReference& buffer, const SP<CWLSurfaceResource>& surface) {
     if (!buffer || surface->m_current.transform != WL_OUTPUT_TRANSFORM_NORMAL)
         return false;
@@ -449,7 +449,7 @@ void unshare(uint64_t address, SWindow& window) {
 // A surface's newest buffer to the app, if it can go now: then held. One
 // the app cannot take puts the window back on capture.
 void send(uint64_t address, SWindow& window, SSurface& entry) {
-    // pixel <addr> <sid> <argb>: a single-pixel buffer's colour, held from
+    // pixel <addr> <sid> <argb>: a single-pixel buffer's color, held from
     // nobody, so with no id and no `done`.
     if (entry.pixel) {
         if (!entry.pixelDue)
@@ -564,7 +564,7 @@ void refresh(uint64_t address, SWindow& window) {
     for (auto& entry : window.surfaces) {
         if (!window.shared && !entry.pending)
             entry.pending = entry.latest;
-        // A colour needs no buffer to tell again.
+        // A color needs no buffer to tell again.
         if (!window.shared && entry.pixel)
             entry.pixelDue = true;
     }

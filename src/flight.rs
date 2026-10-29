@@ -507,7 +507,7 @@ mod tests {
             flight(&app).1
         );
 
-        // In, a metre to one side, then out and turned round.
+        // In, a meter to one side, then out and turned around.
         while state(&app) != WorldState::In {
             app.update();
         }

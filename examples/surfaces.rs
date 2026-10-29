@@ -26,7 +26,7 @@
 //!                stretched over the part by a viewport's destination, as
 //!                clients draw a plain background: any of main, above,
 //!                below and popup, not above with --crop
-//!   --yuv PARTS  these parts in NV12 dmabufs, eight colour bars at 75%
+//!   --yuv PARTS  these parts in NV12 dmabufs, eight color bars at 75%
 //!                each (white, yellow, cyan, green, magenta, red, blue,
 //!                black) in BT.601 at limited range, as Hyprland reads YUV:
 //!                any of main, above, below and popup, not above with --crop
@@ -134,7 +134,7 @@ impl Part {
     }
 }
 
-/// A part drawn as one pixel (`--pixel`): its colour, premultiplied R, G,
+/// A part drawn as one pixel (`--pixel`): its color, premultiplied R, G,
 /// B, A, see-through where the part is.
 fn plain(part: Part) -> [u8; 4] {
     match part {
@@ -147,7 +147,7 @@ fn plain(part: Part) -> [u8; 4] {
 }
 
 /// The pixel at (x, y) of a part at `step`, as premultiplied B, G, R, A
-/// bytes: solid colours, a moving dark bar, and the parts to see through,
+/// bytes: solid colors, a moving dark bar, and the parts to see through,
 /// the toplevel's hole over the lower subsurface only with one (`hole`).
 fn pixel(part: Part, step: u32, x: u32, y: u32, hole: bool) -> [u8; 4] {
     let (width, _) = part.size();
@@ -167,7 +167,7 @@ fn pixel(part: Part, step: u32, x: u32, y: u32, hole: bool) -> [u8; 4] {
         return opaque([0x20, 0x20, 0x20]);
     }
     match part {
-        // Four quadrants, each its own colour, to find them in a picture.
+        // Four quadrants, each its own color, to find them in a picture.
         Part::Toplevel => opaque(match (x < TOPLEVEL.0 / 2, y < TOPLEVEL.1 / 2) {
             (true, true) => [0xe0, 0x30, 0x30],
             (false, true) => [0x30, 0xc0, 0x30],
@@ -240,18 +240,18 @@ enum Memory {
 }
 
 impl Memory {
-    /// Every pixel of a `width` x `height` buffer, `colour` at (x, y), as B,
+    /// Every pixel of a `width` x `height` buffer, `color` at (x, y), as B,
     /// G, R, A bytes.
     fn paint(
         &mut self,
         (width, height): (u32, u32),
-        colour: impl Fn(u32, u32) -> [u8; 4],
+        color: impl Fn(u32, u32) -> [u8; 4],
     ) -> Result<(), String> {
         let fill = |bytes: &mut [u8], stride: usize| {
             for y in 0..height {
                 for x in 0..width {
                     let at = y as usize * stride + x as usize * 4;
-                    bytes[at..at + 4].copy_from_slice(&colour(x, y));
+                    bytes[at..at + 4].copy_from_slice(&color(x, y));
                 }
             }
         };
@@ -275,7 +275,7 @@ impl Memory {
                     let bytes = mapped.buffer_mut();
                     for y in 0..height {
                         for x in 0..width {
-                            let (luma, cb, cr) = bt601(colour(x, y));
+                            let (luma, cb, cr) = bt601(color(x, y));
                             bytes[y as usize * stride + x as usize] = luma;
                             if x % 2 == 0 && y % 2 == 0 {
                                 let at = (height + y / 2) as usize * stride + x as usize;
