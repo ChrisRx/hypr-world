@@ -1,5 +1,7 @@
 # hypr-world
 
+![hypr-world](hypr-world.png)
+
 Every Hyprland workspace on the walls of a 3D house, its windows captured
 live and hung where they are in 2D, to walk around in. The app is a Bevy
 program running as an ordinary Wayland client. The hypr-world plugin
@@ -40,8 +42,8 @@ tree: on a version mismatch the plugin says so and the app exits.
 Installed, package.nix builds the app (`nix build`), and plugin/default.nix,
 given it as `app` and the session's Hyprland, the plugin that launches it.
 The nixos-config builds both and loads the plugin from
-`~/.config/hypr/plugins/libhypr-world.so`. `plugin/dev.sh` swaps a build from
-this tree in for that one, until the next login.
+`~/.config/hypr/plugins/libhypr-world.so`. `plugin/dev.sh` leaves a plugin
+the config loads alone: try builds in a nested session (below) instead.
 
 ## Using it
 
