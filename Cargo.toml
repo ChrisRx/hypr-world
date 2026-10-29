@@ -1,0 +1,67 @@
+[package]
+name = "hypr-world"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+bevy = { version = "0.20", default-features = false, features = [
+    "default_app",
+    "std",
+    "multi_threaded",
+    "bevy_winit",
+    "wayland",
+    "3d_api",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    # The on-screen hint line.
+    "ui_api",
+    "ui_bevy_render",
+    "bevy_text",
+    "default_font",
+    # The panorama.
+    "jpeg",
+    "png",
+    # The rocket launcher's model, a glTF file of the user's own
+    # (launcher.rs), and the sound on the way in and out (sound.rs).
+    "bevy_gltf",
+    "bevy_audio",
+    "wav",
+] }
+# Physics: the player against the house. The release for Bevy 0.20.
+avian3d = { version = "0.8", default-features = false, features = ["3d", "parry-f32", "parallel"] }
+wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# "staging" for the single-pixel buffers of the test client
+# (examples/surfaces.rs).
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+gbm = { version = "0.18", default-features = false }
+# The dmabuf import goes through wgpu-hal's Vulkan backend, the same
+# versions Bevy 0.20 uses.
+wgpu = "30"
+wgpu-hal = { version = "30", features = ["vulkan"] }
+# Raw Vulkan for what wgpu-hal does not do: buffers of more than one plane,
+# and handing them between queue families. The version wgpu-hal 30 uses.
+ash = "0.38"
+rustix = { version = "1", features = ["fs", "mm", "event", "net"] }
+# The app's settings, one JSON object from the plugin (config.rs).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# wayland-scanner's generated code names it for bitfield enums.
+bitflags = "2"
+
+[features]
+# The running app over JSON-RPC on 127.0.0.1:15702, to look at what it
+# thinks the desktop is (README.md, "Looking inside").
+remote = ["bevy/bevy_remote"]
+
+[dev-dependencies]
+# Compiling the app's shaders the way Bevy does, and validating them, in the
+# tests: the compiler cannot check them, and a broken one is an invisible
+# house. The same versions Bevy and wgpu use.
+wesl = "0.6"
+naga = { version = "30", features = ["wgsl-in"] }

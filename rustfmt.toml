@@ -1,0 +1,4 @@
+# Rust formatting: rustfmt's defaults, for this edition. `cargo fmt` before
+# committing; `cargo fmt --check` says whether anything is left.
+edition = "2024"
+style_edition = "2024"
