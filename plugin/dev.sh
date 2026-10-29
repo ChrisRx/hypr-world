@@ -15,8 +15,9 @@
 # any other). Hyprland keys loaded plugins by path, and dlopen can hand back
 # a cached image for a path it has seen, so every build is loaded from a
 # fresh copy under $XDG_RUNTIME_DIR, in one hyprctl batch with the unload.
-# Until the first swap, a loaded plugin is taken to be the one the session
-# config loads, $HYPR_WORLD_INSTALLED (the nixos-config's link by default).
+# A plugin loaded with no swap recorded is the one the session config loads,
+# which this leaves alone: the config would load it again on its next reload,
+# next to the swapped-in build.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -24,7 +25,6 @@ CONFIG=${NIXOS_CONFIG:-/etc/nixos/nixos-config}
 BUILD=$HERE/build
 RUN=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr-world-dev
 STATE=$RUN/loaded
-INSTALLED=${HYPR_WORLD_INSTALLED:-$HOME/.config/hypr/plugins/libhypr-world.so}
 
 die() {
   echo "dev.sh: $*" >&2
@@ -63,9 +63,10 @@ loaded_count() {
 
 swap() {
   local new=$1 old out
-  old=$(cat "$STATE" 2>/dev/null || echo "$INSTALLED")
+  old=$(cat "$STATE" 2>/dev/null || true)
 
   if (($(loaded_count) > 0)); then
+    [[ -n $old ]] || die "the session config loads hypr-world; try builds in nested.sh instead"
     out=$(hyprctl --batch "plugin unload $old ; plugin load $new" || true)
     [[ ${out%%$'\n'*} == ok ]] || die "could not unload $old (${out%%$'\n'*})"
   else
@@ -97,7 +98,8 @@ case ${1:-reload} in
     swap "$copy"
     ;;
   unload)
-    old=$(cat "$STATE" 2>/dev/null || echo "$INSTALLED")
+    old=$(cat "$STATE" 2>/dev/null || true)
+    [[ -n $old ]] || die "nothing loaded by dev.sh to unload"
     hyprctl plugin unload "$old"
     rm -f "$STATE"
     if [[ $old == "$RUN"/* ]]; then rm -f "$old"; fi
