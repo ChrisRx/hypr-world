@@ -44,8 +44,14 @@ PHLMONITOR monitor();
 // The app's own window, once it is mapped.
 PHLWINDOW window();
 
-// The app's special workspace is shown.
+// The app's special workspace is shown, or the app is a backend's
+// (setBackend): then it is always in view.
 bool inView();
+
+// The connected app runs outside this compositor, with this one as its
+// backend (plugin/nested.sh backend): its window is in another session, so
+// it counts as in view, and the world key leaves it alone. Until it goes.
+void setBackend();
 
 // The app connected (its process id is Server::peerPid()) or went away.
 void appConnected(bool connected);

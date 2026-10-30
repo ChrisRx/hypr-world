@@ -15,7 +15,11 @@
 use std::{
     collections::HashMap,
     fs::File,
-    os::fd::{AsFd, OwnedFd},
+    os::{
+        fd::{AsFd, OwnedFd},
+        unix::net::UnixStream,
+    },
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -168,6 +172,18 @@ pub fn export_handle(address: u64) -> u32 {
     (address & 0xffff_ffff) as u32
 }
 
+/// A Wayland connection to the compositor at `display`, a socket's path, else
+/// to $WAYLAND_DISPLAY's: a backend's compositor is not the one the app's
+/// window is on (glue.rs `Backend`).
+pub fn connect(display: Option<&Path>) -> Result<Connection, String> {
+    let Some(path) = display else {
+        return Connection::connect_to_env().map_err(|e| format!("wayland connect: {e}"));
+    };
+    let stream = UnixStream::connect(path)
+        .map_err(|e| format!("wayland connect {}: {e}", path.display()))?;
+    Connection::from_socket(stream).map_err(|e| format!("wayland connect {}: {e}", path.display()))
+}
+
 /// The renderer's end of the capture thread.
 pub struct Capture {
     requests: Sender<Request>,
@@ -280,9 +296,11 @@ fn send(requests: &Sender<Request>, wake: &OwnedFd, request: Request) {
 }
 
 impl Capture {
-    /// Starts the capture thread. If it cannot run (no Wayland, not
-    /// Hyprland, no dmabufs) it says why, and no frames ever come.
-    pub fn start(app: Wake) -> Self {
+    /// Starts the capture thread, on the compositor at `display` (a Wayland
+    /// socket's path), else $WAYLAND_DISPLAY's. If it cannot run (no
+    /// Wayland, not Hyprland, no dmabufs) it says why, and no frames ever
+    /// come.
+    pub fn start(app: Wake, display: Option<PathBuf>) -> Self {
         let (requests, asked) = channel();
         let (sender, frames) = channel();
         let wake =
@@ -291,7 +309,7 @@ impl Capture {
 
         let (thread_wake, thread_counters) = (wake.clone(), counters.clone());
         thread::spawn(move || {
-            if let Err(e) = run(asked, &thread_wake, sender, app, thread_counters) {
+            if let Err(e) = run(asked, &thread_wake, sender, app, thread_counters, display) {
                 eprintln!("hypr-world: capture stopped: {e}");
             }
         });
@@ -682,8 +700,9 @@ fn run(
     frames: Sender<(u32, DmabufFrame)>,
     app: Wake,
     counters: Arc<Counters>,
+    display: Option<PathBuf>,
 ) -> Result<(), String> {
-    let conn = Connection::connect_to_env().map_err(|e| format!("wayland connect: {e}"))?;
+    let conn = connect(display.as_deref())?;
     let (globals, mut queue) =
         registry_queue_init::<State>(&conn).map_err(|e| format!("wayland registry: {e}"))?;
     let qh = queue.handle();

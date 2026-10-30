@@ -5,6 +5,8 @@
 //! loaded, and turns lines into events. Bevy drains them once a frame and
 //! writes its own lines through the shared stream. Standalone, a thread on
 //! Hyprland's IPC makes the same events in the plugin's place (standalone.rs).
+//! With a backend, the plugin is a nested Hyprland's, and the app's input
+//! goes into it (backend.rs).
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -37,7 +39,10 @@ use bevy::{
 };
 use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg};
 
+mod backend;
 mod standalone;
+
+pub use backend::Backend;
 
 use crate::{
     WorldSystems,
@@ -67,7 +72,17 @@ pub fn plugin(app: &mut App) {
         .add_message::<DesktopChange>()
         .add_systems(Startup, (spawn_hint, spawn_crosshair))
         // Before Bevy reads the input, which the plugin's keys and mouse join.
-        .add_systems(PreUpdate, drain.in_set(WorldSystems::Feed));
+        // A backend's app first sends the window's on into the nested
+        // Hyprland, before the plugin's come back in.
+        .add_systems(
+            PreUpdate,
+            (
+                backend::forward.run_if(|glue: Res<Glue>| glue.backend),
+                drain,
+            )
+                .chain()
+                .in_set(WorldSystems::Feed),
+        );
     for mode in [InputMode::Off, InputMode::Look, InputMode::Type] {
         app.add_systems(OnEnter(mode), show_hint);
     }
@@ -79,7 +94,7 @@ pub fn plugin(app: &mut App) {
 /// The line protocol's version, said in each side's hello. The plugin and
 /// the app are built from the same tree, so they must match exactly: bump it
 /// with any change to the lines either side sends.
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// How often the app tells the plugin it is alive; the plugin gives input
 /// back to Hyprland after 2 s of silence.
@@ -140,11 +155,10 @@ impl PluginInput<'_, '_> {
             .unwrap_or(Entity::PLACEHOLDER)
     }
 
-    fn key(&mut self, code: u32, pressed: bool) {
+    fn key(&mut self, code: u32, pressed: bool, window: Entity) {
         let Some(key_code) = key_code(code) else {
             return;
         };
-        let window = self.window();
         self.keys.write(KeyboardInput {
             key_code,
             logical_key: Key::Unidentified(NativeKey::Unidentified),
@@ -155,8 +169,7 @@ impl PluginInput<'_, '_> {
         });
     }
 
-    fn button(&mut self, code: u32, pressed: bool) {
-        let window = self.window();
+    fn button(&mut self, code: u32, pressed: bool, window: Entity) {
         self.buttons.write(MouseButtonInput {
             button: mouse_button(code),
             state: state(pressed),
@@ -573,6 +586,13 @@ pub struct Glue {
     /// The desktop comes from Hyprland's IPC, not the plugin, which is never
     /// asked for (standalone.rs).
     pub standalone: bool,
+    /// The plugin is a nested Hyprland's, and the app's window is not in it
+    /// (backend.rs): the app is always in view, never flies, and takes the
+    /// mouse itself.
+    pub backend: bool,
+    /// The way the window's input goes into the nested Hyprland, with a
+    /// backend.
+    inject: Option<backend::Injector>,
     /// The window a drag holds (the plugin's implicit grab), by address.
     pub grab: Option<u64>,
     /// Counts the connections, for what is said once to each.
@@ -601,11 +621,32 @@ impl Glue {
         let (control_tx, control_wake) = (tx.clone(), wake.clone());
         thread::spawn(move || control(&control_tx, &control_wake));
         let (thread_writer, thread_wake) = (writer.clone(), wake.clone());
-        thread::spawn(move || run(tx, thread_writer, thread_wake, damage));
+        thread::spawn(move || run(tx, thread_writer, thread_wake, damage, socket_path(), false));
         let heartbeat_writer = writer.clone();
         thread::spawn(move || heartbeat(&heartbeat_writer, &wake));
 
         Self::new(rx, writer)
+    }
+
+    /// As `start`, against the plugin in the nested Hyprland `backend`, and
+    /// with the window's input going into it.
+    pub fn backend(wake: Wake, damage: Damage, backend: &Backend) -> Self {
+        let (tx, rx) = channel();
+        let writer: Writer = Arc::default();
+
+        let (control_tx, control_wake) = (tx.clone(), wake.clone());
+        thread::spawn(move || control(&control_tx, &control_wake));
+        let (thread_writer, thread_wake) = (writer.clone(), wake.clone());
+        let socket = backend.instance.join("hypr-world.sock");
+        thread::spawn(move || run(tx, thread_writer, thread_wake, damage, Some(socket), true));
+        let heartbeat_writer = writer.clone();
+        thread::spawn(move || heartbeat(&heartbeat_writer, &wake));
+
+        Self {
+            backend: true,
+            inject: Some(backend::Injector::start(backend)),
+            ..Self::new(rx, writer)
+        }
     }
 
     /// As `start`, with the desktop from Hyprland's IPC and no plugin at
@@ -648,6 +689,8 @@ impl Glue {
             writer,
             connected: false,
             standalone: false,
+            backend: false,
+            inject: None,
             grab: None,
             connection: 0,
         }
@@ -732,8 +775,17 @@ fn socket_path() -> Option<PathBuf> {
     Some(instance_dir()?.join("hypr-world.sock"))
 }
 
-fn run(events: Sender<Event>, writer: Writer, wake: Wake, damage: Damage) {
-    let Some(path) = socket_path() else {
+/// The connection to the plugin at `path`, kept. A backend's app says so
+/// after its hello.
+fn run(
+    events: Sender<Event>,
+    writer: Writer,
+    wake: Wake,
+    damage: Damage,
+    path: Option<PathBuf>,
+    backend: bool,
+) {
+    let Some(path) = path else {
         eprintln!("hypr-world: not running under Hyprland, no glue");
         return;
     };
@@ -758,6 +810,9 @@ fn run(events: Sender<Event>, writer: Writer, wake: Wake, damage: Damage) {
                 *slot = Some(stream);
                 if let Some(stream) = slot.as_mut() {
                     let _ = writeln!(stream, "hello {VERSION}");
+                    if backend {
+                        let _ = writeln!(stream, "backend");
+                    }
                 }
             }
 
@@ -1248,8 +1303,12 @@ fn drain(
                 // whether there is a plugin: `set`, which enters Off again
                 // from Off, where `set_if_different` would not.
                 told.mode.set(InputMode::Off);
-                // A (re)connect brings the whole feed afresh.
-                *desktop = Desktop::default();
+                // A (re)connect brings the whole feed afresh. A backend's
+                // app is in view whatever the plugin says.
+                *desktop = Desktop {
+                    shown: glue.backend,
+                    ..default()
+                };
                 told.desktop.write(DesktopChange::Reset);
             }
             Event::Mode(mode) => {
@@ -1262,6 +1321,8 @@ fn drain(
                 told.mode.set_if_different(mode);
             }
             Event::Grab(window) => glue.grab = window,
+            // A backend's app never flies: its window is not the plugin's.
+            Event::Enter | Event::Leave if glue.backend => {}
             Event::Enter => {
                 told.enter.write(Enter);
             }
@@ -1296,8 +1357,14 @@ fn drain(
                 told.quit.write(Quit);
             }
             Event::Motion(delta) => input.moved(delta),
-            Event::Key { code, pressed } => input.key(code, pressed),
-            Event::Button { code, pressed } => input.button(code, pressed),
+            Event::Key { code, pressed } => {
+                let window = plugin_window(&glue, &input);
+                input.key(code, pressed, window);
+            }
+            Event::Button { code, pressed } => {
+                let window = plugin_window(&glue, &input);
+                input.button(code, pressed, window);
+            }
             Event::Active(id) => desktop.active = Some(id),
             Event::Monitor(monitor) => desktop.monitor = Some(monitor),
             Event::Desktop(change) => {
@@ -1308,10 +1375,22 @@ fn drain(
                     .write(DesktopChange::Layer(picture.layer, layer));
                 told.pictures.write(picture);
             }
+            Event::Shown(_) if glue.backend => {}
             Event::Shown(shown) => desktop.shown = shown,
             Event::Settings(value) => settings.0 = value,
             Event::Setting(key, value) => settings.set(&key, &value),
         }
+    }
+}
+
+/// The window the plugin's keys and buttons are said to come from: the
+/// app's, or with a backend none, so that `backend::forward` tells them
+/// from the window's own.
+fn plugin_window(glue: &Glue, input: &PluginInput) -> Entity {
+    if glue.backend {
+        Entity::PLACEHOLDER
+    } else {
+        input.window()
     }
 }
 

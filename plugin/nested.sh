@@ -5,6 +5,11 @@
 # session's compositor, so it runs where the app does, with the GPU and the
 # session's Wayland socket, on a special workspace of its own.
 #
+#   nested.sh backend        the nested Hyprland as the app's backend: headless,
+#                            no window in the session, the plugin's build
+#                            loaded in it, then the app run in the session
+#                            against it (`cargo nested`), its output here
+#   nested.sh headless       the same without running the app
 #   nested.sh up             start, or load if it is running, then it and the
 #                            world in view (what dev.sh runs when the session
 #                            config loads the plugin)
@@ -15,6 +20,13 @@
 #   nested.sh toggle         the world key, in the nested session
 #   nested.sh drive [out-dir [steps-file]]
 #                            tools/drive.sh against the nested session's app
+#   nested.sh run <command>  a command started in the nested Hyprland, on its
+#                            active workspace: an app to try on the walls.
+#                            A shell command line; quote it whole when an
+#                            argument has a space in it
+#   nested.sh rofi [mode]    rofi in the session, over the app, starting what
+#                            it runs in the nested Hyprland (drun by default):
+#                            Super+Ctrl+Space from inside the world
 #   nested.sh client [args]  the test client (examples/surfaces.rs), built
 #                            and started floating on its active workspace,
 #                            its output in $DIR/surfaces.log
@@ -62,12 +74,25 @@ windowed() {
   hyprctl -i "$1" monitors -j | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null
 }
 
+# Whether it draws on its headless output (`headless`), the size of the
+# session's monitor, and so needs no window in the session.
+headless() {
+  hyprctl -i "$1" monitors -j | jq -e 'any(.[]; .name == "hypr-world")' >/dev/null
+}
+
 # Run by the session's compositor: the nested Hyprland itself. The app its
 # plugin launches keeps its pipe and log in $DIR.
 compositor() {
   echo $$ >"$DIR/running"
   export HYPR_WORLD_DIR=$DIR
   export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_CRASHREPORTER=1
+  # For its rofi bind (nested/hyprland.lua): this script, and the session's
+  # display, where rofi shows.
+  export HYPR_WORLD_NESTED_SH=$HERE/nested.sh HYPR_WORLD_SESSION_DISPLAY=${WAYLAND_DISPLAY:-}
+  # The session's monitor, for its headless output's rule (nested/hyprland.lua).
+  local mode scale
+  read -r mode scale < <(hyprctl monitors -j | jq -r 'first(.[] | select(.focused)) | "\(.width)x\(.height)@60 \(.scale)"')
+  export HYPR_WORLD_MODE=$mode HYPR_WORLD_SCALE=$scale
 
   # On start Hyprland points the session's systemd and D-Bus activation
   # environment at itself (`systemctl --user import-environment`, then
@@ -79,13 +104,23 @@ compositor() {
   # These two, first on its PATH, keep the nested one away from the
   # session's systemd altogether, and it runs on a D-Bus of its own
   # (`dbus-run-session`, below) in case anything reaches for the session's.
+  # That bus does get the nested display, without --systemd (the session's):
+  # apps it starts, as rofi's drun and single-instance ones such as Ghostty
+  # do, open in the nested Hyprland.
   mkdir -p "$DIR/bin"
   cat >"$DIR/bin/systemctl" <<'EOF'
 #!/bin/sh
 case " $* " in *" --user "*) exit 0 ;; esac
 exec /run/current-system/sw/bin/systemctl "$@"
 EOF
-  printf '#!/bin/sh\nexit 0\n' >"$DIR/bin/dbus-update-activation-environment"
+  cat >"$DIR/bin/dbus-update-activation-environment" <<'EOF'
+#!/bin/sh
+for arg do
+  shift
+  [ "$arg" = --systemd ] || set -- "$@" "$arg"
+done
+exec /run/current-system/sw/bin/dbus-update-activation-environment "$@"
+EOF
   chmod +x "$DIR/bin/systemctl" "$DIR/bin/dbus-update-activation-environment"
   export PATH=$DIR/bin:$PATH
 
@@ -170,11 +205,72 @@ show() {
   hyprctl dispatch "hl.dsp.workspace.toggle_special(\"$WORKSPACE\")" >/dev/null
 }
 
+# The nested Hyprland with no window in the session: drawing on a headless
+# output the size of the session's monitor, the plugin's newest build loaded,
+# and a shell to type into beside the test terminal.
+to_headless() {
+  local sig name deadline
+  if sig=$(running); then load; else start; fi
+  sig=$(running)
+  if ! headless "$sig"; then
+    hyprctl -i "$sig" output create headless hypr-world >/dev/null
+    deadline=$((SECONDS + 5))
+    until headless "$sig"; do
+      ((SECONDS < deadline)) || die "no headless output in $sig, see $RUNTIME/hypr/$sig/hyprland.log"
+      sleep 0.2
+    done
+    for name in $(hyprctl -i "$sig" monitors -j | jq -r '.[] | select(.name | startswith("WAYLAND-")) | .name'); do
+      hyprctl -i "$sig" output remove "$name" >/dev/null
+    done
+  fi
+  if ! hyprctl -i "$sig" clients -j | jq -e 'any(.[]; .title == "hypr-world-shell")' >/dev/null; then
+    hyprctl -i "$sig" eval 'hl.exec_cmd("alacritty --title hypr-world-shell")' >/dev/null
+  fi
+}
+
+# The app in the session, against the nested Hyprland, until it quits.
+backend() {
+  to_headless
+  cd "$ROOT"
+  HYPR_WORLD_DIR=$DIR exec direnv exec . cargo run --release -- --backend "$(running)"
+}
+
+# rofi on the session's display, launching into the nested Hyprland. From
+# the nested one's own bind as well, so its instance is read from $INSTANCE
+# rather than checked against the session's (`running`). drun starts apps
+# itself, past -run-command, so rofi runs with the nested Hyprland's
+# environment for them to inherit, and is handed its own connection to the
+# session's display as an open socket (WAYLAND_SOCKET), which libwayland
+# takes out of the environment once it has connected.
+rofi_into() {
+  local sig display session pid bus
+  sig=$(cat "$INSTANCE" 2>/dev/null) || die "not running"
+  display=$(sed -n 2p "$RUNTIME/hypr/$sig/hyprland.lock" 2>/dev/null)
+  [[ -n $display ]] || die "no Wayland socket for $sig"
+  # Its D-Bus, for apps rofi starts through it and single-instance ones,
+  # which would find the session's copy on the session's bus.
+  pid=$(sed -n 1p "$RUNTIME/hypr/$sig/hyprland.lock")
+  bus=$(tr '\0' '\n' <"/proc/$pid/environ" | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p')
+  session=${HYPR_WORLD_SESSION_DISPLAY:-${WAYLAND_DISPLAY:-}}
+  [[ -n $session ]] || die "no session display"
+  [[ $session == /* ]] || session=$RUNTIME/$session
+  WAYLAND_DISPLAY=$display HYPRLAND_INSTANCE_SIGNATURE=$sig DBUS_SESSION_BUS_ADDRESS=${bus:-${DBUS_SESSION_BUS_ADDRESS:-}} \
+    exec python3 -I -c '
+import os, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+fd = s.detach()
+os.set_inheritable(fd, True)
+os.environ["WAYLAND_SOCKET"] = str(fd)
+os.execvp(sys.argv[2], sys.argv[2:])
+' "$session" rofi -show "${1:-drun}" "${@:2}"
+}
+
 # This tree's build in front of you: the nested Hyprland started, or the
 # build loaded into the one running, then it and the world in view.
 up() {
   local sig
-  if sig=$(running) && ! windowed "$sig"; then
+  if sig=$(running) && ! windowed "$sig" && ! headless "$sig"; then
     echo "nested.sh: its window was closed, starting it again"
     stop
   fi
@@ -202,9 +298,22 @@ stop() {
 
 case ${1:-status} in
   compositor) compositor ;;
+  backend) backend ;;
+  headless) to_headless ;;
   up) up ;;
   start) start ;;
   load) load ;;
+  rofi)
+    shift
+    rofi_into "$@"
+    ;;
+  run)
+    sig=$(running) || die "not running"
+    shift
+    (($#)) || die "usage: $0 run <command>"
+    # As a quoted string, which JSON and Lua write alike.
+    hyprctl -i "$sig" eval "hl.exec_cmd($(jq -rn --arg c "$*" '$c | @json'))" >/dev/null
+    ;;
   toggle)
     sig=$(running) || die "not running"
     hyprctl -i "$sig" eval 'hl.plugin.hypr_world.toggle()' >/dev/null
@@ -237,12 +346,16 @@ case ${1:-status} in
   status)
     if sig=$(running); then
       echo "nested Hyprland $sig, on special:$WORKSPACE"
-      windowed "$sig" || echo "its window is closed: nested.sh up starts it again"
+      if headless "$sig"; then
+        echo "headless, the app's backend (nested.sh backend)"
+      elif ! windowed "$sig"; then
+        echo "its window is closed: nested.sh up starts it again"
+      fi
       echo "plugin: $(hyprctl -i "$sig" hypr-world 2>/dev/null || echo 'not loaded')"
       echo "app's pipe and log: $DIR"
     else
       echo "not running"
     fi
     ;;
-  *) die "usage: $0 [up|start|load|toggle|drive|client|show|status|stop]" ;;
+  *) die "usage: $0 [backend|headless|run|rofi|up|start|load|toggle|drive|client|show|status|stop]" ;;
 esac

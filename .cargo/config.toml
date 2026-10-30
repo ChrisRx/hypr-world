@@ -1,3 +1,5 @@
 [alias]
 # The app with no plugin, the desktop from Hyprland's IPC (main.rs).
 world = "run --release -- --standalone"
+# The app against the nested Hyprland plugin/nested.sh started (main.rs).
+nested = "run --release -- --backend"

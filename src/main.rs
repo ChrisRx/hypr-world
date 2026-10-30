@@ -17,6 +17,15 @@
 //! the app opens fullscreen and takes the mouse itself. There are no layers,
 //! and the windows on the walls cannot be used.
 //!
+//!   hypr-world --backend [instance]
+//!
+//! runs against a nested Hyprland with the plugin loaded in it, its instance
+//! signature, else the one plugin/nested.sh started (`plugin/nested.sh
+//! backend`, `cargo nested`): the plugin feeds the app from there, the app
+//! opens fullscreen here and captures from there, and while it has the mouse,
+//! its keys and clicks go into the nested Hyprland, where the windows on the
+//! walls are (glue/backend.rs).
+//!
 //!   hypr-world --probe [window]
 //!
 //! captures a few frames of one window (the focused one, the first whose
@@ -96,12 +105,29 @@ fn main() {
         return;
     }
     let standalone = args.first().is_some_and(|a| a == "--standalone");
+    let backend = if args.first().is_some_and(|a| a == "--backend") {
+        match glue::Backend::find(args.get(1).map(String::as_str)) {
+            Ok(backend) => Some(backend),
+            Err(e) => {
+                eprintln!("hypr-world: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    let fullscreen = standalone || backend.is_some();
 
     // The threads, which share the wake. The glue thread hands the plugin's
     // damage straight to the capture thread, which starts the copies itself.
     let wake = wake::Wake::default();
-    let captures = capture::Capture::start(wake.clone());
-    let glue = if standalone {
+    let captures = capture::Capture::start(
+        wake.clone(),
+        backend.as_ref().map(|backend| backend.display.clone()),
+    );
+    let glue = if let Some(backend) = &backend {
+        glue::Glue::backend(wake.clone(), captures.damage(), backend)
+    } else if standalone {
         glue::Glue::standalone(wake.clone(), captures.damage())
     } else {
         glue::Glue::start(wake.clone(), captures.damage())
@@ -117,7 +143,7 @@ fn main() {
                         name: Some("hypr-world".into()),
                         // Standalone, Hyprland places it as any window: fullscreen,
                         // it leaves the tiled windows it shows where they are.
-                        mode: if standalone {
+                        mode: if fullscreen {
                             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
                         } else {
                             WindowMode::Windowed
@@ -222,7 +248,7 @@ fn probe(arg: Option<&str>) {
     eprintln!("hypr-world: capturing {label} ({address:#x})");
 
     // No event loop to wake: it waits on the frames itself.
-    let capture = capture::Capture::start(wake::Wake::default());
+    let capture = capture::Capture::start(wake::Wake::default(), None);
     let handle = capture::export_handle(address);
     capture.request(handle);
 

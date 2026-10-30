@@ -3325,6 +3325,7 @@ dependencies = [
  "wesl",
  "wgpu",
  "wgpu-hal",
+ "xkbcommon-dl",
 ]
 
 [[package]]

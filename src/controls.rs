@@ -16,13 +16,16 @@ pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (grab_mouse, quit_keys, take_screenshots).in_set(WorldSystems::Input),
-    );
+    )
+    .add_systems(OnEnter(InputMode::Off), let_go);
 }
 
 /// Taking the mouse. With the hypr-world plugin, a click into the app asks
 /// it for the keyboard and mouse, and Super+Escape gives them back. Without
 /// it, the app grabs the pointer through Wayland, and the windows on the
-/// walls cannot be used.
+/// walls cannot be used. With a backend, both: the app's window is not the
+/// plugin's, so it grabs the pointer itself, and what it gets goes on to the
+/// plugin (glue/backend.rs).
 fn grab_mouse(
     glue: Res<Glue>,
     mode: Res<State<InputMode>>,
@@ -31,6 +34,10 @@ fn grab_mouse(
 ) {
     if glue.connected {
         if *mode.get() == InputMode::Off && mouse.just_pressed(MouseButton::Left) {
+            if glue.backend {
+                cursor.grab_mode = CursorGrabMode::Locked;
+                cursor.visible = false;
+            }
             glue.send("grab");
         }
         return;
@@ -39,6 +46,15 @@ fn grab_mouse(
     if mouse.just_pressed(MouseButton::Left) {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
+    }
+}
+
+/// The plugin gave the input back (Super+Escape): a backend's app lets go of
+/// the pointer it grabbed.
+fn let_go(glue: Res<Glue>, mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    if glue.backend && glue.connected {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
     }
 }
 

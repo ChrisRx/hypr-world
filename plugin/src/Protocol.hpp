@@ -16,7 +16,7 @@ namespace World::Protocol {
 // The protocol's version, said in each side's hello. The plugin and the app
 // are built from the same tree, so they must match exactly: bump it with any
 // change to the lines either side sends.
-inline constexpr int kVersion = 2;
+inline constexpr int kVersion = 3;
 
 // The tokens of one line, as views into it.
 inline std::vector<std::string_view> tokens(std::string_view line) {

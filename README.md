@@ -23,6 +23,7 @@ target/release/hypr-world runs from anywhere, without the dev shell:
 direnv allow                        # once
 cargo build --release               # the app
 cargo world                         # the app alone, no plugin: see below
+plugin/nested.sh backend            # the app against a nested Hyprland's plugin: see below
 plugin/dev.sh                       # build the plugin and (re)load it into the session
 plugin/dev.sh -k                    # the same, ending the running app first
 cargo run --release -- --probe blender   # capture only: sizes and timing
@@ -36,6 +37,23 @@ a click. There are no layers (the bar), the windows on the walls cannot be
 used, and Q or Escape quits. Settings the plugin would pass on can be set
 over the control pipe: `echo 'set panorama ~/.config/hypr/panorama.jpg' >
 $XDG_RUNTIME_DIR/hypr-world.ctl`.
+
+`plugin/nested.sh backend` is the same with the plugin: it starts a nested
+Hyprland drawing on a headless output the size of your monitor, with no
+window in the session, loads plugin/'s build into it with a terminal and a
+shell, and runs the app here against it (`cargo nested`, `cargo run
+--release -- --backend`). The plugin feeds the app as in the session, bar
+and shared buffers included, and the app captures from the nested Hyprland.
+A click takes the mouse, and while the app has it, its keys, clicks and
+scrolls go into the nested Hyprland through a virtual keyboard and pointer,
+so Super+Left Alt types into the window under the dot and clicks land on
+it. Super+Escape gives the mouse back; there is no flight. `plugin/nested.sh
+load` swaps in a new plugin build, and the app reconnects on its own.
+`plugin/nested.sh run firefox` opens an app in it, as does Super+Ctrl+Return
+for a terminal from inside the world, and `plugin/nested.sh rofi`
+(Super+Ctrl+Space inside) opens rofi over the app, starting what it runs in
+the nested Hyprland. `plugin/nested.sh headless` sets up the nested side
+without the app, and `plugin/nested.sh stop` ends it.
 
 The world key launches target/release/hypr-world itself, its output in
 `$XDG_RUNTIME_DIR/hypr-world.log`, written afresh each launch. The plugin

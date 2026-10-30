@@ -110,6 +110,8 @@ void onLine(std::string_view line) {
 
         if (verb == "hello")
             onHello(tokens);
+        else if (verb == "backend")
+            App::setBackend();
         else if (verb == "grab")
             Input::enterLook("app");
         else if (verb == "release")

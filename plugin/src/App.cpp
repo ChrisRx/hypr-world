@@ -74,6 +74,9 @@ std::optional<Clock::time_point> g_awaitingFade;
 // ones are not.
 bool g_announced = false;
 
+// The connected app is a backend's (setBackend).
+bool g_backend = false;
+
 // The app window's opacity, as last set.
 float g_opacity = 1.F;
 
@@ -149,7 +152,7 @@ PHLMONITOR shownOn() {
 }
 
 void assertLive() {
-    if (!shownOn())
+    if (!inView())
         return;
 
     // setSuspended does nothing for a window already in that state.
@@ -497,14 +500,27 @@ PHLMONITOR monitor() {
 }
 
 bool inView() {
-    return shownOn() != nullptr;
+    return g_backend || shownOn() != nullptr;
+}
+
+void setBackend() {
+    g_backend = true;
+    assertLive();
+    // Everything again, as in view now.
+    Feed::refresh();
 }
 
 std::string describe() {
+    if (g_backend)
+        return "a backend's app, in view";
     return std::format("{}, launches {}", shownOn() ? "in view" : "out of view", kApp);
 }
 
 void toggle() {
+    // Its window is in another session: nothing here to show or hide.
+    if (g_backend)
+        return;
+
     if (!Server::connected()) {
         // A launch still starting up is waited for, not repeated.
         if (!g_showWhenReady) {
@@ -543,6 +559,7 @@ void appConnected(bool connected) {
     }
 
     clearLive();
+    g_backend = false;
 
     // The app quit: its special workspace is empty now, and still open over
     // the desktop.
