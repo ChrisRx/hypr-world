@@ -22,10 +22,20 @@ target/release/hypr-world runs from anywhere, without the dev shell:
 ```sh
 direnv allow                        # once
 cargo build --release               # the app
+cargo world                         # the app alone, no plugin: see below
 plugin/dev.sh                       # build the plugin and (re)load it into the session
 plugin/dev.sh -k                    # the same, ending the running app first
 cargo run --release -- --probe blender   # capture only: sizes and timing
 ```
+
+`cargo world` (`cargo run --release -- --standalone`) is for working on
+the app: it needs no plugin and leaves the session's alone. The desktop
+comes from Hyprland's IPC socket, polled 30 times a second, the windows
+through capture alone, and the app opens fullscreen and takes the mouse on
+a click. There are no layers (the bar), the windows on the walls cannot be
+used, and Q or Escape quits. Settings the plugin would pass on can be set
+over the control pipe: `echo 'set panorama ~/.config/hypr/panorama.jpg' >
+$XDG_RUNTIME_DIR/hypr-world.ctl`.
 
 The world key launches target/release/hypr-world itself, its output in
 `$XDG_RUNTIME_DIR/hypr-world.log`, written afresh each launch. The plugin

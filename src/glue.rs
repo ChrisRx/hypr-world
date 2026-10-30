@@ -3,7 +3,8 @@
 //!
 //! A background thread keeps the connection, retrying while the plugin is not
 //! loaded, and turns lines into events. Bevy drains them once a frame and
-//! writes its own lines through the shared stream.
+//! writes its own lines through the shared stream. Standalone, a thread on
+//! Hyprland's IPC makes the same events in the plugin's place (standalone.rs).
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -35,6 +36,8 @@ use bevy::{
     window::PrimaryWindow,
 };
 use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg};
+
+mod standalone;
 
 use crate::{
     WorldSystems,
@@ -567,6 +570,9 @@ pub struct Glue {
     events: Mutex<Receiver<Event>>,
     writer: Writer,
     pub connected: bool,
+    /// The desktop comes from Hyprland's IPC, not the plugin, which is never
+    /// asked for (standalone.rs).
+    pub standalone: bool,
     /// The window a drag holds (the plugin's implicit grab), by address.
     pub grab: Option<u64>,
     /// Counts the connections, for what is said once to each.
@@ -602,6 +608,21 @@ impl Glue {
         Self::new(rx, writer)
     }
 
+    /// As `start`, with the desktop from Hyprland's IPC and no plugin at
+    /// all: it stays disconnected, and the app takes the mouse itself.
+    pub fn standalone(wake: Wake, damage: Damage) -> Self {
+        let (tx, rx) = channel();
+
+        let (control_tx, control_wake) = (tx.clone(), wake.clone());
+        thread::spawn(move || control(&control_tx, &control_wake));
+        thread::spawn(move || standalone::run(tx, wake, damage));
+
+        Self {
+            standalone: true,
+            ..Self::new(rx, Writer::default())
+        }
+    }
+
     /// Connected to `stream`, with no threads: what systems send goes to it,
     /// and nothing comes in.
     #[cfg(test)]
@@ -626,6 +647,7 @@ impl Glue {
             events: Mutex::new(events),
             writer,
             connected: false,
+            standalone: false,
             grab: None,
             connection: 0,
         }
@@ -697,16 +719,17 @@ fn control_line(line: &str) -> Option<Event> {
     }
 }
 
-/// $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hypr-world.sock
-fn socket_path() -> Option<PathBuf> {
+/// $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE, where Hyprland's
+/// sockets and the plugin's are.
+fn instance_dir() -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
     let instance = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
-    Some(
-        PathBuf::from(runtime)
-            .join("hypr")
-            .join(instance)
-            .join("hypr-world.sock"),
-    )
+    Some(PathBuf::from(runtime).join("hypr").join(instance))
+}
+
+/// The plugin's socket, in the instance's folder.
+fn socket_path() -> Option<PathBuf> {
+    Some(instance_dir()?.join("hypr-world.sock"))
 }
 
 fn run(events: Sender<Event>, writer: Writer, wake: Wake, damage: Damage) {
@@ -1335,7 +1358,7 @@ pub fn spawn_hint(
 ) {
     commands.spawn((
         Hint,
-        Text::new(hint(glue.connected, *mode.get(), armed(launcher))),
+        Text::new(hint(&glue, *mode.get(), armed(launcher))),
         TextFont::from_font_size(20.0),
         TextColor(Color::srgb(0.92, 0.93, 0.95)),
         Node {
@@ -1382,7 +1405,7 @@ fn show_hint(
     launcher: Option<Res<State<Launcher>>>,
     mut text: Single<&mut Text, With<Hint>>,
 ) {
-    text.0 = hint(glue.connected, *mode.get(), armed(launcher)).to_string();
+    text.0 = hint(&glue, *mode.get(), armed(launcher)).to_string();
 }
 
 /// The rocket launcher is out.
@@ -1390,8 +1413,11 @@ fn armed(launcher: Option<Res<State<Launcher>>>) -> bool {
     launcher.is_some_and(|launcher| *launcher.get() == Launcher::Armed)
 }
 
-fn hint(connected: bool, mode: InputMode, armed: bool) -> &'static str {
-    match (connected, mode) {
+fn hint(glue: &Glue, mode: InputMode, armed: bool) -> &'static str {
+    match (glue.connected, mode) {
+        (false, _) if glue.standalone => {
+            "Standalone: click to look around · the windows cannot be used · Q or Esc quits"
+        }
         (false, _) => "No hypr-world plugin, so no windows · Q or Esc quits",
         (true, InputMode::Off) => "Click to take the mouse and keyboard · Q or Esc quits",
         (true, _) if armed => {

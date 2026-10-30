@@ -10,6 +10,13 @@
 //! up/down, mouse to look. Q or Escape quits. Super+Escape gives the mouse
 //! and keyboard back without quitting.
 //!
+//!   hypr-world --standalone
+//!
+//! runs with no plugin at all, for working on the app (`cargo world`): the
+//! desktop comes from Hyprland's IPC, the windows through capture alone, and
+//! the app opens fullscreen and takes the mouse itself. There are no layers,
+//! and the windows on the walls cannot be used.
+//!
 //!   hypr-world --probe [window]
 //!
 //! captures a few frames of one window (the focused one, the first whose
@@ -47,6 +54,7 @@ use bevy::{
     input::InputSystems,
     prelude::*,
     render::diagnostic::RenderDiagnosticsPlugin,
+    window::{MonitorSelection, WindowMode},
 };
 
 // The camera, which nearly every module looks for.
@@ -87,12 +95,17 @@ fn main() {
         probe(args.first().map(String::as_str));
         return;
     }
+    let standalone = args.first().is_some_and(|a| a == "--standalone");
 
     // The threads, which share the wake. The glue thread hands the plugin's
     // damage straight to the capture thread, which starts the copies itself.
     let wake = wake::Wake::default();
     let captures = capture::Capture::start(wake.clone());
-    let glue = glue::Glue::start(wake.clone(), captures.damage());
+    let glue = if standalone {
+        glue::Glue::standalone(wake.clone(), captures.damage())
+    } else {
+        glue::Glue::start(wake.clone(), captures.damage())
+    };
 
     App::new()
         .add_plugins(
@@ -102,6 +115,13 @@ fn main() {
                         title: "hypr-world".into(),
                         // The Wayland app id, for window rules and `hyprctl clients`.
                         name: Some("hypr-world".into()),
+                        // Standalone, Hyprland places it as any window: fullscreen,
+                        // it leaves the tiled windows it shows where they are.
+                        mode: if standalone {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        } else {
+                            WindowMode::Windowed
+                        },
                         ..default()
                     }),
                     ..default()
