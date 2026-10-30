@@ -1421,34 +1421,6 @@ fn heartbeat(writer: &Writer, wake: &Wake) {
     }
 }
 
-/// The hint line at the bottom of the view: who has the input, and the keys
-/// that matter right now. A tiling setup shows no window titles, so this is
-/// where it is said.
-#[derive(Component)]
-pub struct Hint;
-
-/// With the hint for the mode as it is: the mode's first `OnEnter` runs
-/// before `Startup`, when there is no hint yet to show it on.
-pub fn spawn_hint(
-    mut commands: Commands,
-    glue: Res<Glue>,
-    mode: Res<State<InputMode>>,
-    launcher: Option<Res<State<Launcher>>>,
-) {
-    commands.spawn((
-        Hint,
-        Text::new(hint(&glue, *mode.get(), armed(launcher))),
-        TextFont::from_font_size(20.0),
-        TextColor(Color::srgb(0.92, 0.93, 0.95)),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(16.0),
-            bottom: Val::Px(12.0),
-            ..default()
-        },
-    ));
-}
-
 /// A dot at the center of the view: what clicks, scroll and hover go to.
 #[derive(Component)]
 pub struct Crosshair;
@@ -1475,16 +1447,69 @@ pub fn spawn_crosshair(mut commands: Commands) {
     ));
 }
 
+/// The hint in the bottom left corner: who has the input, and the keys that
+/// matter right now. A tiling setup shows no window titles, so this is where
+/// it is said. A panel with a badge for the mode on top, then a line for each
+/// key: the key in a chip, and what it does beside it, lined up.
+#[derive(Component)]
+pub struct Hint;
+
+const HINT_TEXT: Color = Color::srgb(0.80, 0.82, 0.86);
+const KEYCAP: Color = Color::srgb(0.90, 0.91, 0.94);
+const KEYCAP_SIDE: Color = Color::srgb(0.52, 0.55, 0.60);
+const DARK_TEXT: Color = Color::srgb(0.08, 0.09, 0.11);
+const PANEL: Color = Color::srgba(0.04, 0.05, 0.07, 0.62);
+
+/// With the hint for the mode as it is: the mode's first `OnEnter` runs
+/// before `Startup`, when there is no hint yet to show it on.
+pub fn spawn_hint(
+    mut commands: Commands,
+    glue: Res<Glue>,
+    mode: Res<State<InputMode>>,
+    launcher: Option<Res<State<Launcher>>>,
+) {
+    let hint = commands
+        .spawn((
+            Hint,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(16.0),
+                bottom: Val::Px(16.0),
+                // Keys, then what they do.
+                display: Display::Grid,
+                grid_template_columns: RepeatedGridTrack::auto(2),
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+        ))
+        .id();
+    fill(
+        &mut commands,
+        hint,
+        &help(&glue, *mode.get(), armed(launcher)),
+    );
+}
+
 /// The hint for the input mode just entered, or the launcher taken out or
 /// put away. A (re)connect enters Off again (`drain`), for the hint to say
 /// whether there is a plugin.
 fn show_hint(
+    mut commands: Commands,
     glue: Res<Glue>,
     mode: Res<State<InputMode>>,
     launcher: Option<Res<State<Launcher>>>,
-    mut text: Single<&mut Text, With<Hint>>,
+    hint: Single<Entity, With<Hint>>,
 ) {
-    text.0 = hint(&glue, *mode.get(), armed(launcher)).to_string();
+    fill(
+        &mut commands,
+        *hint,
+        &help(&glue, *mode.get(), armed(launcher)),
+    );
 }
 
 /// The rocket launcher is out.
@@ -1492,23 +1517,207 @@ fn armed(launcher: Option<Res<State<Launcher>>>) -> bool {
     launcher.is_some_and(|launcher| *launcher.get() == Launcher::Armed)
 }
 
-fn hint(glue: &Glue, mode: InputMode, armed: bool) -> &'static str {
-    match (glue.connected, mode) {
-        (false, _) if glue.standalone => {
-            "Standalone: click to look around · the windows cannot be used · Q or Esc quits"
+/// What the hint says in one mode.
+struct Help {
+    /// The mode's name, and the color of its badge.
+    badge: (&'static str, Color),
+    /// Each key and what it does. A note with no key has none.
+    keys: &'static [(Option<&'static str>, &'static str)],
+    /// Q and Esc quit. Not while typing: they go to the window.
+    quits: bool,
+}
+
+fn help(glue: &Glue, mode: InputMode, armed: bool) -> Help {
+    const GRAY: Color = Color::srgb(0.62, 0.65, 0.70);
+    const AMBER: Color = Color::srgb(0.95, 0.70, 0.25);
+    const BLUE: Color = Color::srgb(0.45, 0.68, 0.98);
+    const GREEN: Color = Color::srgb(0.45, 0.85, 0.55);
+    const RED: Color = Color::srgb(0.95, 0.38, 0.35);
+
+    let (badge, keys): (_, &[_]) = match (glue.connected, mode) {
+        (false, _) if glue.standalone => (
+            ("STANDALONE", GRAY),
+            &[
+                (Some("Click"), "look around"),
+                (None, "the windows cannot be used"),
+            ],
+        ),
+        (false, _) => (
+            ("NO PLUGIN", AMBER),
+            &[(None, "no hypr-world plugin, so no windows")],
+        ),
+        (true, InputMode::Off) => (
+            ("IDLE", GRAY),
+            &[(Some("Click"), "take the mouse and keyboard")],
+        ),
+        (true, _) if armed => (
+            ("ARMED", RED),
+            &[
+                (Some("Click"), "close the window hit"),
+                (Some("R"), "put the launcher away"),
+                (Some("Super+Esc"), "give the mouse back"),
+            ],
+        ),
+        (true, InputMode::Look) => (
+            ("LOOK", BLUE),
+            &[
+                (Some("Super+Left Alt"), "type into the window under the dot"),
+                (None, "rest the dot on a workspace to switch"),
+                (Some("R"), "rocket launcher"),
+                (Some("Super+L"), "hide the world"),
+                (Some("Super+Esc"), "give the mouse back"),
+            ],
+        ),
+        (true, InputMode::Type) => (
+            ("TYPE", GREEN),
+            &[
+                (Some("Super+Left Alt"), "stop typing"),
+                (Some("Super+Esc"), "give the mouse back"),
+            ],
+        ),
+    };
+    Help {
+        badge,
+        keys,
+        quits: mode != InputMode::Type || !glue.connected,
+    }
+}
+
+/// Puts `help` in the hint's panel, in place of what it said before.
+fn fill(commands: &mut Commands, hint: Entity, help: &Help) {
+    commands
+        .entity(hint)
+        .despawn_children()
+        .with_children(|panel| {
+            let (name, color) = help.badge;
+            panel
+                .spawn((
+                    Node {
+                        grid_column: GridPlacement::span(2),
+                        justify_self: JustifySelf::Start,
+                        margin: UiRect::bottom(Val::Px(4.0)),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BackgroundColor(color),
+                ))
+                .with_child((
+                    Text::new(name),
+                    TextFont::from_font_size(15.0),
+                    TextColor(DARK_TEXT),
+                ));
+            for &(key, action) in help.keys {
+                spawn_key(panel, key, action);
+            }
+            if help.quits {
+                spawn_key(panel, Some("Q / Esc"), "quit");
+            }
+        });
+}
+
+/// A line of the hint: the key, then what it does. A note with no key leaves
+/// the key's column empty.
+fn spawn_key(panel: &mut ChildSpawnerCommands, key: Option<&str>, action: &str) {
+    let mut cell = panel.spawn(Node {
+        justify_self: JustifySelf::Start,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(3.0),
+        ..default()
+    });
+    match key {
+        Some("Click") => {
+            cell.with_children(spawn_mouse);
         }
-        (false, _) => "No hypr-world plugin, so no windows · Q or Esc quits",
-        (true, InputMode::Off) => "Click to take the mouse and keyboard · Q or Esc quits",
-        (true, _) if armed => {
-            "The rocket launcher is out: a click closes the window it hits · R puts it away\n\
-             Super+Escape gives the mouse back · Q or Esc quits"
+        Some(key) => {
+            cell.with_children(|cell| spawn_keycaps(cell, key));
         }
-        (true, InputMode::Look) => {
-            "Super+Left Alt types into the window under the dot · rest it on another workspace to switch\n\
-             R takes out the rocket launcher · Super+L hides the world · Super+Escape gives the mouse back · Q or Esc quits"
+        None => {}
+    }
+    panel.spawn((
+        Text::new(action),
+        TextFont::from_font_size(17.0),
+        TextColor(HINT_TEXT),
+        TextShadow {
+            offset: Vec2::splat(1.5),
+            color: Color::srgba(0.0, 0.0, 0.0, 0.8),
+        },
+    ));
+}
+
+/// A click: a mouse, outlined, with its left button filled in. The font has
+/// no glyph for one.
+fn spawn_mouse(cell: &mut ChildSpawnerCommands) {
+    const WIDTH: f32 = 11.0;
+    const HEIGHT: f32 = 15.0;
+    const LINE: f32 = 1.5;
+
+    cell.spawn((
+        Node {
+            width: Val::Px(WIDTH),
+            height: Val::Px(HEIGHT),
+            border: UiRect::all(Val::Px(LINE)),
+            border_radius: BorderRadius::all(Val::Px(WIDTH / 2.0)),
+            ..default()
+        },
+        BorderColor::all(KEYCAP),
+    ))
+    .with_child((
+        // Inside the outline, so its corner follows the outline's.
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(50.0),
+            height: Val::Percent(42.0),
+            border_radius: BorderRadius::top_left(Val::Px(WIDTH / 2.0 - LINE)),
+            ..default()
+        },
+        BackgroundColor(KEYCAP),
+    ));
+}
+
+/// Each key of `keys` on a keycap of its own: "Super+L" is two, joined by a
+/// plus, and "Q / Esc" two, either of which does it.
+fn spawn_keycaps(cell: &mut ChildSpawnerCommands, keys: &str) {
+    let joiner = |cell: &mut ChildSpawnerCommands, text: &'static str| {
+        cell.spawn((
+            Text::new(text),
+            TextFont::from_font_size(12.0),
+            TextColor(HINT_TEXT),
+        ));
+    };
+    for (i, either) in keys.split(" / ").enumerate() {
+        if i > 0 {
+            joiner(cell, "/");
         }
-        (true, InputMode::Type) => {
-            "Typing into the window · Super+Left Alt stops typing · Super+Escape gives the mouse back"
+        for (j, key) in either.split('+').enumerate() {
+            if j > 0 {
+                joiner(cell, "+");
+            }
+            cell.spawn((
+                Node {
+                    min_width: Val::Px(18.0),
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::axes(Val::Px(4.0), Val::Px(0.0)),
+                    // Thicker along the bottom, for the key's side.
+                    border: UiRect {
+                        left: Val::Px(1.0),
+                        right: Val::Px(1.0),
+                        top: Val::Px(1.0),
+                        bottom: Val::Px(3.0),
+                    },
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    ..default()
+                },
+                BackgroundColor(KEYCAP),
+                BorderColor::all(KEYCAP_SIDE),
+            ))
+            .with_child((
+                Text::new(key),
+                TextFont::from_font_size(11.0),
+                TextColor(DARK_TEXT),
+            ));
         }
     }
 }
