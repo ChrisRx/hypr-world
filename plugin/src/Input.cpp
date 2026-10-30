@@ -665,7 +665,6 @@ void enterLook(const char* why) {
     g_lastApp = Clock::now();
     hideCursor();
     Server::send(std::format("state look {}", why));
-    notify(g_handle, "the app has the mouse and keyboard; Super+Escape gives them back", 4000);
     deliverAim();
 }
 
@@ -689,7 +688,6 @@ void leave(const char* why) {
     showCursor();
     scheduleResync();
     Server::send(std::format("state off {}", why));
-    notify(g_handle, std::format("mouse and keyboard back to Hyprland ({})", why), 4000);
 }
 
 void enterType(const char* why) {
@@ -697,10 +695,8 @@ void enterType(const char* why) {
         return;
 
     const auto hit = aimed();
-    if (!hit) {
-        notify(g_handle, "aim at a window to type into it", 4000);
+    if (!hit)
         return;
-    }
 
     typeInto(hit->window, why);
 }
@@ -728,7 +724,6 @@ void typeInto(const PHLWINDOW& window, const char* why) {
     g_pSeatManager->setKeyboardFocus(surface);
 
     Server::send(std::format("state type 0x{:x} {}", reinterpret_cast<uint64_t>(window.get()), why));
-    notify(g_handle, std::format("typing into {}; Super+Left Alt goes back to looking", window->m_title), 4000);
 }
 
 void leaveType(const char* why) {
@@ -766,9 +761,7 @@ void setArmed(bool armed) {
 void appConnected(bool connected) {
     // The app starts with its launcher put away.
     g_armed = false;
-    if (connected)
-        notify(g_handle, "app connected; click into it to give it the mouse and keyboard", 4000);
-    else
+    if (!connected)
         leave("app");
 }
 

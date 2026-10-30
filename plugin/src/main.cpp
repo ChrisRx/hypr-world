@@ -366,7 +366,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[hypr-world] init failed");
     }
 
-    notify(g_handle, "loaded", 3000);
     return {"hypr-world", "Input and focus glue for the hypr-world app", "ChrisRx", "0.1.0"};
 }
 

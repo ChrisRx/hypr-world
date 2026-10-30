@@ -18,8 +18,7 @@
 
 namespace World {
 
-// The app's window has no visible title, so what the plugin does with the
-// keyboard and mouse is said where it can be seen.
+// The first launch, and the problems: nothing else is announced.
 inline void notify(HANDLE handle, const std::string& text, float timeMs, bool problem = false) {
     if (handle)
         HyprlandAPI::addNotification(handle, "[hypr-world] " + text, problem ? CHyprColor{1.0F, 0.45F, 0.3F, 1.0F} : CHyprColor{0.4F, 0.65F, 0.95F, 1.0F},

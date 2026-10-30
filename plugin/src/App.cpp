@@ -70,6 +70,10 @@ std::optional<Clock::time_point> g_showWhenReady;
 // Shown at no opacity, waiting until then for the app to fade itself in.
 std::optional<Clock::time_point> g_awaitingFade;
 
+// Whether the first launch since the plugin loaded was announced: later
+// ones are not.
+bool g_announced = false;
+
 // The app window's opacity, as last set.
 float g_opacity = 1.F;
 
@@ -354,14 +358,15 @@ void launch() {
     }
 
     g_showWhenReady = Clock::now() + kLaunchTimeout;
-    notify(g_handle, "launching hypr-world", 4000);
+    if (!std::exchange(g_announced, true))
+        notify(g_handle, "launching hypr-world", 4000);
 }
 
 void onTick(SP<CEventLoopTimer> self, void*) {
     try {
         const auto now = Clock::now();
         if (passed(g_showWhenReady, now))
-            notify(g_handle, std::format("the app did not show up; see {}", logPath()), 4000);
+            notify(g_handle, std::format("the app did not show up; see {}", logPath()), 4000, true);
         if (passed(g_awaitingFade, now))
             setOpacity(1.F);
         if (passed(g_leaving, now))
@@ -502,9 +507,7 @@ std::string describe() {
 void toggle() {
     if (!Server::connected()) {
         // A launch still starting up is waited for, not repeated.
-        if (g_showWhenReady)
-            notify(g_handle, "the app is starting", 4000);
-        else {
+        if (!g_showWhenReady) {
             g_cameFrom = Desktop::focusState()->window();
             launch();
         }
