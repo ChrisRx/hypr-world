@@ -43,7 +43,8 @@ Installed, package.nix builds the app (`nix build`), and plugin/default.nix,
 given it as `app` and the session's Hyprland, the plugin that launches it.
 The nixos-config builds both and loads the plugin from
 `~/.config/hypr/plugins/libhypr-world.so`. `plugin/dev.sh` leaves a plugin
-the config loads alone: try builds in a nested session (below) instead.
+the config loads alone and runs `plugin/nested.sh up` instead, which tries the
+build in a nested session (below).
 
 ## Using it
 
@@ -168,14 +169,19 @@ takes them back.
 
 ## A nested session
 
+`plugin/nested.sh up` is the short way in: it starts the nested session, or
+loads the new build into the running one, then brings it and the world into
+view. `plugin/dev.sh` runs it for you when the session config loads the plugin.
+
 `plugin/nested.sh start` runs a Hyprland of its own in a window, on the
 special workspace `hypr-world-nested` (`plugin/nested.sh show` brings it
 into view), with plugin/'s build loaded into it and nowhere else, and a
 terminal for the house's walls. A plugin build that crashes takes that
 window down, not the session. `plugin/nested.sh load` builds plugin/ again
 (`plugin/dev.sh build`) and loads it there in place of the last,
-`plugin/nested.sh toggle` is its world key, which launches
-target/release/hypr-world as the session's does, `plugin/nested.sh drive
+`plugin/nested.sh toggle` is its world key, as is Super+Ctrl+L inside it,
+which launches target/release/hypr-world as the session's does,
+`plugin/nested.sh drive
 [out-dir [steps-file]]` is tools/drive.sh against its app, `plugin/nested.sh
 status` says what is running, and `plugin/nested.sh stop` ends it and
 everything in it. The nested Hyprland draws only while its window is in view

@@ -5,6 +5,7 @@
 #include "Util.hpp"
 
 #include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
@@ -17,6 +18,7 @@
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/pointer/PointerManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -24,12 +26,14 @@
 #include <linux/input-event-codes.h>
 
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace World::Input {
@@ -44,6 +48,17 @@ HANDLE g_handle = nullptr;
 // long means it hung.
 constexpr auto kWatchdogTimeout = std::chrono::seconds(2);
 constexpr auto kWatchdogTick    = std::chrono::milliseconds(500);
+
+// An absolute move this far across the monitor in one event, as a fraction
+// of it, is the pointer coming back into the nested window, not a turn.
+constexpr double kWarpJump = 0.25;
+
+// Held this close to the monitor's left or right edge, as a fraction of it,
+// the turn goes on by kEdgeStep px every kEdgeTick: the session's cursor stops
+// at its screen's edge, and with it the nested window's absolute moves.
+constexpr double kEdge     = 0.01;
+constexpr double kEdgeStep = 12.0;
+constexpr auto   kEdgeTick = std::chrono::milliseconds(16);
 
 EState            g_state = EState::Off;
 Clock::time_point g_lastApp;
@@ -61,11 +76,14 @@ bool intercepting() {
 // SMotionEvent holds a smart pointer, so both sides pass it by invisible
 // reference; declaring it by value on both keeps them matched.
 using MotionFn  = void (*)(void* self, IPointer::SMotionEvent event);
+using WarpFn    = void (*)(void* self, IPointer::SMotionAbsoluteEvent event);
 using SetSurfFn = void (*)(void* self, SP<Desktop::View::CWLSurface> surface, const Vector2D& hotspot);
 using SetBufFn  = void (*)(void* self, SP<Aquamarine::IBuffer> buffer, const Vector2D& hotspot, const float& scale);
 
 CFunctionHook* g_motionHook     = nullptr;
 MotionFn       g_motionOriginal = nullptr;
+CFunctionHook* g_warpHook       = nullptr;
+WarpFn         g_warpOriginal   = nullptr;
 CFunctionHook* g_surfHook       = nullptr;
 SetSurfFn      g_surfOriginal   = nullptr;
 CFunctionHook* g_bufHook        = nullptr;
@@ -87,6 +105,65 @@ void hkOnMouseMoved(void* self, IPointer::SMotionEvent event) {
 
     if (g_motionOriginal)
         g_motionOriginal(self, event);
+}
+
+// The last absolute position while the app has the mouse, 0 to 1 across the
+// monitor, for the next one to be told as motion.
+std::optional<Vector2D> g_lastWarp;
+
+// Armed only while the pointer is held at an edge (kEdge).
+SP<CEventLoopTimer> g_edgeTimer;
+
+// -1 or 1 for the edge the last absolute position is held at, else 0.
+int heldEdge() {
+    if (!intercepting() || !g_lastWarp)
+        return 0;
+    if (g_lastWarp->x <= kEdge)
+        return -1;
+    if (g_lastWarp->x >= 1.0 - kEdge)
+        return 1;
+    return 0;
+}
+
+void onEdgeTick(SP<CEventLoopTimer> self, void*) {
+    guarded("edge", [&] {
+        const int edge = heldEdge();
+        if (edge == 0) {
+            self->updateTimeout(std::nullopt);
+            return;
+        }
+        Server::send(std::format("motion {} 0 {} 0", edge * kEdgeStep, edge * kEdgeStep));
+        self->updateTimeout(kEdgeTick);
+    });
+}
+
+// A pointer that only knows where it is, not how far it moved: in the nested
+// session (nested.sh), whose Wayland backend has no relative pointer, every
+// mouse move comes this way. The difference from the last one is the motion.
+// The session's cursor is not locked to the nested window, so a turn held at
+// its edge goes on by itself (onEdgeTick), and the jump on coming back in is
+// dropped rather than told.
+void hkOnMouseWarp(void* self, IPointer::SMotionAbsoluteEvent event) {
+    if (intercepting()) {
+        try {
+            const auto last = std::exchange(g_lastWarp, event.absolute);
+            const auto monitor = Desktop::focusState()->monitor();
+            if (last && monitor) {
+                const auto step = event.absolute - *last;
+                if (std::abs(step.x) < kWarpJump && std::abs(step.y) < kWarpJump) {
+                    const auto delta = step * monitor->m_size;
+                    Server::send(std::format("motion {} {} {} {}", delta.x, delta.y, delta.x, delta.y));
+                }
+            }
+            if (heldEdge() != 0 && g_edgeTimer && !g_edgeTimer->armed())
+                g_edgeTimer->updateTimeout(kEdgeTick);
+        } catch (...) {}
+        return; // swallowed, as relative motion is
+    }
+
+    g_lastWarp.reset();
+    if (g_warpOriginal)
+        g_warpOriginal(self, event);
 }
 
 void hkSetCursorSurface(void* self, SP<Desktop::View::CWLSurface> surface, const Vector2D& hotspot) {
@@ -118,12 +195,13 @@ CFunctionHook* hook(HANDLE handle, const std::string& query, const std::string& 
 }
 
 void unhookAll() {
-    for (CFunctionHook** h : {&g_motionHook, &g_surfHook, &g_bufHook}) {
+    for (CFunctionHook** h : {&g_motionHook, &g_warpHook, &g_surfHook, &g_bufHook}) {
         if (*h)
             (*h)->unhook();
         *h = nullptr;
     }
     g_motionOriginal = nullptr;
+    g_warpOriginal   = nullptr;
     g_surfOriginal   = nullptr;
     g_bufOriginal    = nullptr;
 }
@@ -603,11 +681,14 @@ void init(HANDLE handle) {
     g_handle = handle;
 
     g_motionHook = hook(handle, "onMouseMoved", "CInputManager::onMouseMoved(", reinterpret_cast<void*>(&hkOnMouseMoved), &g_motionOriginal);
+    g_warpHook   = hook(handle, "onMouseWarp", "CInputManager::onMouseWarp(", reinterpret_cast<void*>(&hkOnMouseWarp), &g_warpOriginal);
     g_surfHook   = hook(handle, "setCursorSurface", "CPointerManager::setCursorSurface(", reinterpret_cast<void*>(&hkSetCursorSurface), &g_surfOriginal);
     g_bufHook    = hook(handle, "setCursorBuffer", "CPointerManager::setCursorBuffer(", reinterpret_cast<void*>(&hkSetCursorBuffer), &g_bufOriginal);
 
     g_watchdog = makeShared<CEventLoopTimer>(kWatchdogTick, onWatchdog, nullptr);
     g_pEventLoopManager->addTimer(g_watchdog);
+    g_edgeTimer = makeShared<CEventLoopTimer>(std::nullopt, onEdgeTick, nullptr);
+    g_pEventLoopManager->addTimer(g_edgeTimer);
 }
 
 void startListeners() {
@@ -641,6 +722,7 @@ void shutdown() {
 
     cancelLater(g_resync);
     removeTimer(g_watchdog);
+    removeTimer(g_edgeTimer);
 
     if (wasIntercepting) {
         showCursor();
@@ -663,6 +745,7 @@ void enterLook(const char* why) {
 
     g_state   = EState::Look;
     g_lastApp = Clock::now();
+    g_lastWarp.reset();
     hideCursor();
     Server::send(std::format("state look {}", why));
     deliverAim();

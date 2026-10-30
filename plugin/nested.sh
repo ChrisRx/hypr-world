@@ -5,6 +5,9 @@
 # session's compositor, so it runs where the app does, with the GPU and the
 # session's Wayland socket, on a special workspace of its own.
 #
+#   nested.sh up             start, or load if it is running, then it and the
+#                            world in view (what dev.sh runs when the session
+#                            config loads the plugin)
 #   nested.sh start          the nested Hyprland, this plugin's build loaded in
 #                            it, and a terminal for the walls
 #   nested.sh load           build the plugin and load it into the nested one
@@ -50,6 +53,13 @@ running() {
   [[ -n $sig && $sig != "$SESSION" ]] || return 1
   hyprctl -i "$sig" version >/dev/null 2>&1 || return 1
   echo "$sig"
+}
+
+# Whether its window in the session is still open. Closed (Super+Q on it is
+# the session's bind, not its own), it runs on with only a headless FALLBACK
+# output, which nothing shows or types into.
+windowed() {
+  hyprctl -i "$1" monitors -j | jq -e 'any(.[]; .name | startswith("WAYLAND-"))' >/dev/null
 }
 
 # Run by the session's compositor: the nested Hyprland itself. The app its
@@ -160,6 +170,21 @@ show() {
   hyprctl dispatch "hl.dsp.workspace.toggle_special(\"$WORKSPACE\")" >/dev/null
 }
 
+# This tree's build in front of you: the nested Hyprland started, or the
+# build loaded into the one running, then it and the world in view.
+up() {
+  local sig
+  if sig=$(running) && ! windowed "$sig"; then
+    echo "nested.sh: its window was closed, starting it again"
+    stop
+  fi
+  if running >/dev/null; then load; else start; fi
+  sig=$(running)
+  shown || show
+  [[ $(hyprctl -i "$sig" hypr-world 2>/dev/null) == *", in view,"* ]] ||
+    hyprctl -i "$sig" eval 'hl.plugin.hypr_world.toggle()' >/dev/null
+}
+
 stop() {
   local sig deadline
   sig=$(running) || die "not running"
@@ -177,6 +202,7 @@ stop() {
 
 case ${1:-status} in
   compositor) compositor ;;
+  up) up ;;
   start) start ;;
   load) load ;;
   toggle)
@@ -211,11 +237,12 @@ case ${1:-status} in
   status)
     if sig=$(running); then
       echo "nested Hyprland $sig, on special:$WORKSPACE"
+      windowed "$sig" || echo "its window is closed: nested.sh up starts it again"
       echo "plugin: $(hyprctl -i "$sig" hypr-world 2>/dev/null || echo 'not loaded')"
       echo "app's pipe and log: $DIR"
     else
       echo "not running"
     fi
     ;;
-  *) die "usage: $0 [start|load|toggle|drive|client|show|status|stop]" ;;
+  *) die "usage: $0 [up|start|load|toggle|drive|client|show|status|stop]" ;;
 esac

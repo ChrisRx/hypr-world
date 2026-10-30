@@ -29,6 +29,11 @@ hl.config({
 -- pipe and log in $HYPR_WORLD_DIR. Loading the plugin reloads this file, so
 -- this runs again once hypr-world is loaded.
 if hl.plugin.hypr_world then
+  -- The world key. Not Super+L: the session binds that to its own world,
+  -- and takes it before the nested window sees it. Not with Alt either:
+  -- Super+Left Alt switches between looking and typing.
+  hl.bind("SUPER + CTRL + L", hl.plugin.hypr_world.toggle)
+
   hl.plugin.hypr_world.config({
     world = {
       panorama = "~/.config/hypr/panorama.jpg",

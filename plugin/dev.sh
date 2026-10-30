@@ -2,7 +2,8 @@
 # Build the hypr-world plugin against the running compositor and hot-swap it
 # into the session, no logout.
 #
-#   dev.sh          incremental build, then swap it in
+#   dev.sh          incremental build, then swap it in, or with the session
+#                   config loading it, `nested.sh up` instead
 #   dev.sh -k       the same, ending the running app first, so the world key
 #                   launches the app's newest build (every process named
 #                   hypr-world: a nested session's app too)
@@ -17,7 +18,7 @@
 # fresh copy under $XDG_RUNTIME_DIR, in one hyprctl batch with the unload.
 # A plugin loaded with no swap recorded is the one the session config loads,
 # which this leaves alone: the config would load it again on its next reload,
-# next to the swapped-in build.
+# next to the swapped-in build. The build goes to the nested session then.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -61,6 +62,11 @@ loaded_count() {
   hyprctl plugin list -j | jq '[.[] | select(.name == "hypr-world")] | length'
 }
 
+# Whether the plugin loaded is the one the session config loads.
+config_loaded() {
+  [[ ! -s $STATE ]] && (($(loaded_count) > 0))
+}
+
 swap() {
   local new=$1 old out
   old=$(cat "$STATE" 2>/dev/null || true)
@@ -92,6 +98,10 @@ case ${1:-reload} in
   build) build ;;
   reload)
     build
+    if config_loaded; then
+      echo "dev.sh: the session config loads hypr-world, so this build goes to the nested session"
+      exec "$HERE/nested.sh" up
+    fi
     mkdir -p "$RUN"
     copy=$RUN/libhypr-world-$(date +%s%N).so
     cp "$BUILD/libhypr-world.so" "$copy"
