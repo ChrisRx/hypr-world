@@ -50,9 +50,12 @@ rustPlatform.buildRustPackage {
     alsa-lib
   ];
 
-  # It reads bevy_pbr's shaders out of ~/.cargo/registry, which a build here
-  # has no copy of: the crates are vendored.
-  checkFlags = [ "--skip=materials::tests::yuv_shader_compiles" ];
+  # The shader tests (src/materials.rs) compile against bevy_pbr's shaders,
+  # which a build here has among the vendored crates, not in
+  # ~/.cargo/registry.
+  preCheck = ''
+    export HYPR_WORLD_CRATES="$cargoDeps"
+  '';
 
   # The patchelf has to come first: after wrapProgram, bin/hypr-world is
   # the shell wrapper and the binary is .hypr-world-wrapped.

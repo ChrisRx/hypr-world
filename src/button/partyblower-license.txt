@@ -1,0 +1,7 @@
+partyblower.wav is not covered by this repository's MIT license.
+
+Source:  "partyblower" (partyblower-226659), from Pixabay, cut to the blow
+         and converted from stereo MP3 to mono WAV
+         https://pixabay.com/sound-effects/film-special-effects-partyblower-226659/
+License: Pixabay Content License
+         https://pixabay.com/service/license-summary/

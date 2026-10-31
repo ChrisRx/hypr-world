@@ -77,6 +77,8 @@ if hl.plugin.hypr_world then
   hl.plugin.hypr_world.config({
     world = {
       panorama = "~/.config/hypr/panorama.jpg",
+      -- A click on an empty seat: rofi in the session, launching in here.
+      launcher = nested and (nested .. " rofi") or "rofi -show drun",
     },
   })
 end

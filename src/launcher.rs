@@ -29,6 +29,7 @@ use crate::{
     flight::WorldState,
     glue::Glue,
     player::Player,
+    shadow::{self, Shadow},
     stats::Redraw,
     windows::{DesktopWindow, WindowQuad, crosshair_on},
 };
@@ -232,6 +233,7 @@ fn fly(
     house: SpatialQuery,
     body: Option<Single<Entity, With<Player>>>,
     quads: Query<(&DesktopWindow, &WindowQuad, &GlobalTransform)>,
+    shadow: Res<Shadow>,
     mut rockets: Query<(Entity, &mut Rocket, &mut Transform)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut redraw: Redraw,
@@ -240,6 +242,8 @@ fn fly(
         return;
     }
     let filter = SpatialQueryFilter::from_excluded_entities(body.map(|body| *body));
+    // In the shadow realm the windows are out of reach.
+    let quads = shadow::desktop_in_reach(shadow).then_some(&quads);
     for (entity, mut rocket, mut transform) in &mut rockets {
         let from = transform.translation;
         let step = rocket.velocity * time.delta_secs();
@@ -248,7 +252,7 @@ fn fly(
 
         if let Some(hit) = Dir3::new(step)
             .ok()
-            .and_then(|way| first_hit(from, way, step.length(), &quads, &house, &filter))
+            .and_then(|way| first_hit(from, way, step.length(), quads, &house, &filter))
         {
             let at = match hit {
                 Hit::Window(address, at) => {
@@ -301,13 +305,14 @@ fn first_hit(
     from: Vec3,
     way: Dir3,
     length: f32,
-    quads: &Query<(&DesktopWindow, &WindowQuad, &GlobalTransform)>,
+    quads: Option<&Query<(&DesktopWindow, &WindowQuad, &GlobalTransform)>>,
     house: &SpatialQuery,
     filter: &SpatialQueryFilter,
 ) -> Option<Hit> {
     let ray = Ray3d::new(from, way);
     let window = quads
-        .iter()
+        .into_iter()
+        .flatten()
         .filter_map(|(window, _, quad)| {
             let (t, u, v) = crosshair_on(ray, quad)?;
             ((0.0..=length).contains(&t) && (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v))
@@ -447,6 +452,7 @@ mod tests {
         .init_state::<WorldState>()
         .insert_resource(glue)
         .init_resource::<WorldConfig>()
+        .init_resource::<Shadow>()
         .init_resource::<Stats>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>()

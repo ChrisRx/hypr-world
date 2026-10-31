@@ -1,5 +1,6 @@
-//! The app's own material: a window's surface in YUV turned into RGB. Its
-//! shader is built into the binary, so the app runs from any directory. The
+//! The app's own materials: a window's surface in YUV turned into RGB, and
+//! a still of a workspace warping in the shadow realm (shadow.rs). Their
+//! shaders are built into the binary, so the app runs from any directory. The
 //! house is Bevy's `StandardMaterial` in Bevy's lights (scene.rs).
 //! The panorama is Bevy's `Skybox` (sky.rs). And the rebinding of a material
 //! to its image when the image is resized.
@@ -17,14 +18,19 @@ use bevy::{
 use crate::{WorldSystems, stats::Redraw};
 
 const YUV_SHADER: &str = "embedded://hypr_world/shaders/yuv.wesl";
+const WARP_SHADER: &str = "embedded://hypr_world/shaders/warp.wesl";
 
 pub fn plugin(app: &mut App) {
     embedded_asset!(app, "shaders/yuv.wesl");
-    app.add_plugins(MaterialPlugin::<YuvMaterial>::default())
-        .init_resource::<Rebind>()
-        // After the frames and pictures are in, so that a resize in this
-        // update asks for the next one.
-        .add_systems(Update, rebind.after(WorldSystems::Capture));
+    embedded_asset!(app, "shaders/warp.wesl");
+    app.add_plugins((
+        MaterialPlugin::<YuvMaterial>::default(),
+        MaterialPlugin::<WarpMaterial>::default(),
+    ))
+    .init_resource::<Rebind>()
+    // After the frames and pictures are in, so that a resize in this
+    // update asks for the next one.
+    .add_systems(Update, rebind.after(WorldSystems::Capture));
 }
 
 /// Materials to prepare again once their image's resize is in. A material
@@ -97,6 +103,36 @@ impl Material for YuvMaterial {
     }
 }
 
+/// A still of a workspace, warping slowly in the murk (shaders/warp.wesl).
+/// Unlit and opaque, and fogged by its own shader, which has no view
+/// bindings: the eye and the time come in its params.
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+pub struct WarpMaterial {
+    #[uniform(0)]
+    pub params: WarpParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub still: Handle<Image>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct WarpParams {
+    /// The murk's linear color, and its density in w.
+    pub murk: Vec4,
+    /// The fel green, linear.
+    pub fel: Vec4,
+    /// The eye, and the time in seconds in w.
+    pub eye: Vec4,
+    /// How far the warp has set in, from 0 to 1, in x.
+    pub warp: Vec4,
+}
+
+impl Material for WarpMaterial {
+    fn fragment_shader() -> ShaderRef {
+        WARP_SHADER.into()
+    }
+}
+
 /// The compiler cannot check the shader, and a broken one is an invisible
 /// window. This compiles it as Bevy does, with wesl against Bevy's own
 /// forward_io module, and validates the result with naga.
@@ -110,8 +146,16 @@ mod tests {
         syntax::{ModulePath, PathOrigin},
     };
 
-    /// bevy_pbr 0.20's sources in the cargo registry.
+    /// bevy_pbr 0.20's sources: among the crates in $HYPR_WORLD_CRATES,
+    /// where the Nix build has them vendored (package.nix), or else in the
+    /// cargo registry.
     fn bevy_pbr() -> PathBuf {
+        const CRATE: &str = "bevy_pbr-0.20.0";
+        if let Some(crates) = std::env::var_os("HYPR_WORLD_CRATES") {
+            let vendored = PathBuf::from(crates).join(CRATE);
+            assert!(vendored.exists(), "{CRATE} in {}", vendored.display());
+            return vendored;
+        }
         let cargo = std::env::var_os("CARGO_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -120,7 +164,7 @@ mod tests {
         std::fs::read_dir(cargo.join("registry/src"))
             .expect("the cargo registry")
             .flatten()
-            .map(|e| e.path().join("bevy_pbr-0.20.0"))
+            .map(|e| e.path().join(CRATE))
             .find(|p| p.exists())
             .expect("bevy_pbr 0.20.0 in the cargo registry")
     }
@@ -143,6 +187,7 @@ mod tests {
                 ("constants", []) => Ok("const MATERIAL_BIND_GROUP = 3;\n".into()),
                 ("bevy_pbr", ["render", "forward_io"]) => Ok(Cow::Borrowed(&self.forward_io)),
                 ("hypr_world", ["shaders", "yuv"]) => Ok(include_str!("shaders/yuv.wesl").into()),
+                ("hypr_world", ["shaders", "warp"]) => Ok(include_str!("shaders/warp.wesl").into()),
                 _ => Err(not_found()),
             }
         }
@@ -203,6 +248,11 @@ mod tests {
     #[test]
     fn yuv_shader_compiles() {
         check("yuv");
+    }
+
+    #[test]
+    fn warp_shader_compiles() {
+        check("warp");
     }
 
     /// A resized image's material is marked an update after the image, on

@@ -33,6 +33,7 @@
 //! opening the scene, and prints their size and timing, to check the capture
 //! side on its own.
 
+mod button;
 mod camera;
 mod capture;
 mod config;
@@ -49,6 +50,8 @@ mod materials;
 mod player;
 mod redraw;
 mod scene;
+mod seats;
+mod shadow;
 mod sky;
 mod sound;
 mod stats;
@@ -202,6 +205,7 @@ fn main() {
             camera::plugin,
             controls::plugin,
             scene::plugin,
+            seats::plugin,
             sky::plugin,
             windows::plugin,
             layers::plugin,
@@ -209,7 +213,9 @@ fn main() {
             player::plugin,
             launcher::plugin,
             sound::plugin,
+            shadow::plugin,
         ))
+        .add_plugins(button::plugin)
         // Drawing: the house's material, the windows' frames on the GPU,
         // drawing only on change, and the stats.
         .add_plugins((

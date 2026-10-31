@@ -99,7 +99,7 @@ impl Default for PlayerSettings {
     fn default() -> Self {
         Self {
             flying: false,
-            move_speed: 4.0,
+            move_speed: 5.0,
             move_inertia: 0.05,
             look_sensitivity: 0.0025,
             look_inertia: 0.03,
@@ -534,6 +534,117 @@ mod tests {
         assert!(
             at.x < 3.0 - RADIUS + 0.02 && at.x > 2.5,
             "stopped at the wall, center at {at}"
+        );
+    }
+
+    /// The capsule in the house as scene.rs builds it, walking as the keys
+    /// walk it, down through the doorway, down the stairs on the ramp under
+    /// them and into the room below, then back up into the room above.
+    #[test]
+    fn the_capsule_takes_the_stairs() {
+        use std::time::Duration;
+
+        use bevy::{math::Rect, time::TimeUpdateStrategy};
+
+        use crate::{
+            house,
+            layout::{DROP, Layout, Settings},
+        };
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            TransformPlugin,
+            bevy::asset::AssetPlugin::default(),
+            PhysicsPlugins::new(Update),
+        ))
+        .insert_resource(Gravity(Vec3::NEG_Y * GRAVITY))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            1.0 / 60.0,
+        )));
+        app.finish();
+        app.cleanup();
+
+        let monitor = Vec2::new(1920.0, 1080.0);
+        let layout = Layout::new(
+            &[1, 2, 3],
+            &[4],
+            monitor,
+            Rect::from_corners(Vec2::ZERO, monitor),
+            &Settings::default(),
+        );
+        let shell = house::shell(&layout);
+        let root = app.world_mut().spawn(crate::scene::Shell).id();
+        for block in shell.blocks.iter().filter(|b| b.solid()) {
+            app.world_mut().spawn((
+                ChildOf(root),
+                RigidBody::Static,
+                Collider::cuboid(1.0, 1.0, 1.0),
+                Transform::from_translation(block.center)
+                    .with_rotation(block.rotation)
+                    .with_scale(block.size),
+            ));
+        }
+        for glass in &shell.glass {
+            let size = glass.size;
+            app.world_mut().spawn((
+                ChildOf(root),
+                RigidBody::Static,
+                Collider::cuboid(size.x, size.y, size.z),
+                Transform::from_translation(glass.center).with_rotation(glass.rotation),
+            ));
+        }
+        for slab in &shell.slabs {
+            let points: Vec<Vec3> = slab
+                .outline
+                .iter()
+                .flat_map(|&p| [p, p + Vec3::Y * slab.thickness])
+                .collect();
+            app.world_mut().spawn((
+                ChildOf(root),
+                RigidBody::Static,
+                Collider::convex_hull(&points).expect("a slab"),
+                Transform::default(),
+            ));
+        }
+
+        let stairs = layout.stairs.clone();
+        let start = stairs.top - stairs.down + Vec3::Y * (HALF_HEIGHT + 0.05);
+        let player = app
+            .world_mut()
+            .spawn((Player::default(), Transform::from_translation(start)))
+            .id();
+        app.world_mut().entity_mut(player).insert(GravityScale(1.0));
+
+        let walk = |app: &mut App, way: Vec3| {
+            for _ in 0..240 {
+                let mut velocity = app
+                    .world_mut()
+                    .get_mut::<LinearVelocity>(player)
+                    .expect("a body");
+                velocity.0 = way * 5.0 + Vec3::Y * velocity.y;
+                app.update();
+            }
+            app.world()
+                .get::<Transform>(player)
+                .expect("a body")
+                .translation
+        };
+
+        let at = walk(&mut app, stairs.down);
+        let along = (at - stairs.top).dot(stairs.down);
+        assert!(along > stairs.length, "past the stairs, at {at}");
+        assert!(
+            (at.y - (HALF_HEIGHT - DROP)).abs() < 0.05,
+            "standing on the lower floor, at {at}"
+        );
+
+        let at = walk(&mut app, -stairs.down);
+        let along = (at - stairs.top).dot(stairs.down);
+        assert!(along < 0.0, "back up through the doorway, at {at}");
+        assert!(
+            (at.y - HALF_HEIGHT).abs() < 0.05,
+            "standing on the upper floor, at {at}"
         );
     }
 

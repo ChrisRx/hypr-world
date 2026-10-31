@@ -59,6 +59,7 @@ use crate::{
 pub fn plugin(app: &mut App) {
     app.init_resource::<Desktop>()
         .init_resource::<WorldSettings>()
+        .init_resource::<Launched>()
         .init_state::<InputMode>()
         .register_type_state::<InputMode>()
         .add_message::<Enter>()
@@ -94,7 +95,7 @@ pub fn plugin(app: &mut App) {
 /// The line protocol's version, said in each side's hello. The plugin and
 /// the app are built from the same tree, so they must match exactly: bump it
 /// with any change to the lines either side sends.
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// How often the app tells the plugin it is alive; the plugin gives input
 /// back to Hyprland after 2 s of silence.
@@ -762,6 +763,12 @@ fn control_line(line: &str) -> Option<Event> {
     }
 }
 
+/// One request of Hyprland's own IPC socket (`j/binds` and the like), its
+/// JSON reply, as standalone.rs asks it. It blocks: off the main thread.
+pub fn ask_hyprland(request: &str) -> Option<serde_json::Value> {
+    standalone::ask(&instance_dir()?.join(".socket.sock"), request)
+}
+
 /// $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE, where Hyprland's
 /// sockets and the plugin's are.
 fn instance_dir() -> Option<PathBuf> {
@@ -1421,29 +1428,60 @@ fn heartbeat(writer: &Writer, wake: &Wake) {
     }
 }
 
+/// When a click on an empty seat last ran the launcher (windows.rs
+/// `open_here`). A backend's launcher shows in the session and takes its
+/// keyboard from the app's window while it is up, which is not the app
+/// letting go (backend.rs `forward`): the plugin stays in the world, and
+/// types into what the launcher opens once that comes.
+#[derive(Resource, Default)]
+pub struct Launched(pub Option<Instant>);
+
 /// A dot at the center of the view: what clicks, scroll and hover go to.
-#[derive(Component)]
-pub struct Crosshair;
+/// Over an empty seat it is a plus instead, where a click opens something
+/// (windows.rs `mark_crosshair`).
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Crosshair {
+    Dot,
+    Plus,
+}
 
 pub fn spawn_crosshair(mut commands: Commands) {
-    const SIZE: f32 = 6.0;
+    const DOT: f32 = 6.0;
+    // The plus, bold, white on a dark edge so it shows on any wall or window.
+    const PLUS: f32 = 44.0;
+    const BAR: f32 = 8.0;
+    const EDGE: f32 = 3.0;
+    const COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.85);
+    const BRIGHT: Color = Color::WHITE;
+    const DARK: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
 
-    commands.spawn((
-        Crosshair,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Percent(50.0),
-            top: Val::Percent(50.0),
-            width: Val::Px(SIZE),
-            height: Val::Px(SIZE),
-            margin: UiRect {
-                left: Val::Px(-SIZE / 2.0),
-                top: Val::Px(-SIZE / 2.0),
-                ..default()
-            },
+    // A box `width` by `height`, centered on the middle of the view.
+    let centered = |width: f32, height: f32| Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(50.0),
+        top: Val::Percent(50.0),
+        width: Val::Px(width),
+        height: Val::Px(height),
+        margin: UiRect {
+            left: Val::Px(-width / 2.0),
+            top: Val::Px(-height / 2.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
+        ..default()
+    };
+    let (long, thick) = (PLUS + 2.0 * EDGE, BAR + 2.0 * EDGE);
+
+    commands.spawn((Crosshair::Dot, centered(DOT, DOT), BackgroundColor(COLOR)));
+    commands.spawn((
+        Crosshair::Plus,
+        centered(long, long),
+        Visibility::Hidden,
+        children![
+            (centered(long, thick), BackgroundColor(DARK)),
+            (centered(thick, long), BackgroundColor(DARK)),
+            (centered(PLUS, BAR), BackgroundColor(BRIGHT)),
+            (centered(BAR, PLUS), BackgroundColor(BRIGHT)),
+        ],
     ));
 }
 

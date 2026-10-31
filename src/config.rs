@@ -22,6 +22,9 @@ pub fn plugin(app: &mut App) {
     );
 }
 
+/// More seats than this make a room too wide to walk.
+const MAX_SEATS: u32 = 64;
+
 #[derive(Resource, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct WorldConfig {
@@ -36,6 +39,12 @@ pub struct WorldConfig {
     /// `frame_size` and `room_size` (layout.rs).
     #[serde(flatten)]
     pub layout: layout::Settings,
+    /// `workspaces`: the seats upstairs, one for each workspace from 1 to
+    /// this, 0 to count the number keys bound to them (seats.rs).
+    pub workspaces: u32,
+    /// `launcher`: what a click on an empty seat runs, its windows going
+    /// to that seat's workspace (windows.rs `open_here`), empty for nothing.
+    pub launcher: String,
     /// `player.*` (player.rs).
     pub player: PlayerSettings,
     /// `stats`: false stops the log (stats.rs).
@@ -60,6 +69,8 @@ impl Default for WorldConfig {
             panorama: None,
             msaa: Msaa::Sample2,
             layout: layout::Settings::default(),
+            workspaces: 0,
+            launcher: "rofi -show drun".to_string(),
             player: PlayerSettings::default(),
             stats: true,
             sound: None,
@@ -87,6 +98,12 @@ impl WorldConfig {
         ];
         if let Some((key, value)) = amounts.iter().find(|(_, v)| !(v.is_finite() && *v >= 0.0)) {
             return Err(format!("{key} is {value}, not a number of 0 or more"));
+        }
+        if config.workspaces > MAX_SEATS {
+            return Err(format!(
+                "workspaces is {}, more than {MAX_SEATS}",
+                config.workspaces
+            ));
         }
         // A size of zero would leave no layout. JSON has no NaN.
         if config.layout.frame_size <= 0.0 {
@@ -152,6 +169,8 @@ mod tests {
             "stats": false,
             "sound": "",
             "other_workspace_fps": 30,
+            "workspaces": 8,
+            "launcher": "fuzzel",
             "unknown": "ignored",
         }))
         .unwrap();
@@ -167,6 +186,8 @@ mod tests {
         assert!(!config.stats);
         assert_eq!(config.sound, None, "an empty path is none");
         assert_eq!(config.other_workspace_fps, 30.0);
+        assert_eq!(config.workspaces, 8);
+        assert_eq!(config.launcher, "fuzzel");
         assert_eq!(
             WorldConfig::from_settings(&json!({})).unwrap(),
             WorldConfig::default()
@@ -182,6 +203,8 @@ mod tests {
             json!({ "player": { "flying": "yes" } }),
             json!({ "player": { "move_speed": -4 } }),
             json!({ "other_workspace_fps": -5 }),
+            json!({ "workspaces": 65 }),
+            json!({ "workspaces": -1 }),
             json!({ "player": 1 }),
             json!("world"),
         ] {

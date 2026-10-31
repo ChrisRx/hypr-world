@@ -3312,6 +3312,7 @@ dependencies = [
  "avian3d",
  "bevy",
  "bitflags 2.13.2",
+ "fastrand",
  "gbm",
  "naga",
  "rustix 1.1.6",

@@ -129,6 +129,12 @@ void onLine(std::string_view line) {
         else if (verb == "workspace" && tokens.size() == 2) {
             if (const auto id = Protocol::number<int64_t>(tokens[1]))
                 App::showWorkspace(*id);
+        } else if (verb == "launch" && tokens.size() >= 2) {
+            // The command is the rest of the line, as it was written.
+            if (const auto id = Protocol::number<int64_t>(tokens[1])) {
+                const auto rest = line.substr(tokens[1].data() + tokens[1].size() - line.data());
+                App::openOn(*id, rest.substr(std::min(rest.find_first_not_of(' '), rest.size())));
+            }
         } else if (verb == "alpha" && tokens.size() == 2) {
             if (const auto opacity = Protocol::number<float>(tokens[1]))
                 App::fade(*opacity);

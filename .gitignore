@@ -2,3 +2,5 @@
 /result
 /.direnv
 /plugin/build
+# Blender's backups of a .blend it saves over.
+*.blend1

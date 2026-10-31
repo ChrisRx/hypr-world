@@ -79,11 +79,23 @@ build in a nested session (below).
 With the plugin loaded, the world key (bound to `hl.plugin.hypr_world.toggle`,
 `Super+L` in the nixos-config) launches the app if it is not running, shows
 it fullscreen on `special:hypr-world` and hands it the keyboard and mouse.
-Pressing it again hides it. Every workspace with a window, and the active
-one, has a frame on the walls. Resting the crosshair on a window of another
-workspace for a quarter second switches to it, so hiding the world lands
-there. The line at the bottom lists the keys for the current mode. Without
-the plugin the house is empty.
+Pressing it again hides it. The room upstairs has a side for each
+workspace from 1 to the seat count, numbered left to right from the doorway,
+whether the workspace exists or not, and one more side for the doorway and
+a window. Down a half flight of stairs, under the "Other Workspaces" sign,
+is a second room with every other workspace: those past the seat count, and
+named ones. In its middle is a red button under a glass cover on a
+pedestal: click the cover to lift it, then the button. The seat count is
+the `workspaces` setting, or else the number keys bound under one modifier
+(Super+1 to Super+0 makes ten), the highest workspace bound by number or
+kept by a persistent rule, or else ten.
+
+Resting the crosshair on a window of another workspace for a quarter second
+switches to it, so hiding the world lands there. Over an empty seat the
+crosshair turns into a plus, and a click runs the `launcher`: what it opens
+goes on that seat's workspace without switching to it. The line at the
+bottom lists the keys for the current mode. Without the plugin the house is
+empty.
 
 R takes out the rocket launcher while the app has the mouse and keyboard,
 and puts it away. While it is out a click fires a rocket from the eyes. One
@@ -115,9 +127,11 @@ The `world` table. A key below with a dot is a nested table (`room_size =
 | `panorama` | none | Equirectangular image all around the house. `~` is expanded. |
 | `msaa` | 2 | Samples a pixel: 1 (or 0) is off, 2, 4 or 8. |
 | `frame_size` | 5.04 | The monitor's longer side across a frame, in meters, whatever its resolution and scale. |
-| `room_size.x`, `.y`, `.z` | 0 | The least inside size of the room, in meters. The house grows past it to fit the frames. |
+| `room_size.x`, `.y`, `.z` | 0 | The least inside size of each room, in meters: the larger of x and z across, side to side, and y up. The house grows past it to fit the frames. |
+| `workspaces` | 0 | Seats upstairs, one each for workspaces 1 to this, at most 64. 0 counts the number keys bound to workspaces. |
+| `launcher` | `rofi -show drun` | What a click on an empty seat runs. Its windows go on that seat's workspace. Empty for nothing. |
 | `player.flying` | false | Fly instead of walking. |
-| `player.move_speed` | 4.0 | Meters a second. |
+| `player.move_speed` | 5.0 | Meters a second. |
 | `player.move_inertia` | 0.05 | Easing of movement. |
 | `player.look_sensitivity` | 0.0025 | Mouse look speed. |
 | `player.look_inertia` | 0.03 | Easing of the look. |
@@ -142,13 +156,37 @@ each exported from the `.blend` beside it:
 - `rocket.glb`, a rocket in flight: a capsule 0.25 m long and 7 cm across,
   unlit orange. Its origin is its center, and the app moves it by that.
 
-In both, Blender's +Y is forward (the launcher's muzzle end, the way a
-rocket flies) and +Z is up. The exporter turns those into Bevy's -Z and +Y.
+- `chandelier.glb`, hung in the middle of the room upstairs. Its origin is
+  where the rod from the ceiling meets it, and the middle of its hub, where
+  the app puts its light, is 0.25 m under that (`hang_chandelier` in
+  src/house.rs).
+- `table.glb`, the side table upstairs, 0.9 by 0.6 m and 0.55 m high, and
+  `plant.glb`, the potted plant on it. Their origins are where they stand.
+- `pedestal.glb`, the pedestal downstairs, its top 1 m up. Its button and
+  glass cover are objects of their own, `Button` and `Cover`, which the app
+  moves (src/button.rs): the button's origin is where it rests, and the
+  cover's is its hinge, along its back edge.
+
+In the launcher and the rocket, Blender's +Y is forward (the launcher's
+muzzle end, the way a rocket flies) and +Z is up. The exporter turns those
+into Bevy's -Z and +Y. The furniture faces Blender's -Y, as in its front
+view, which is Bevy's +Z, and the house turns that to the room. The player
+bumps into a box round the table and the pedestal, not their meshes.
 Edit a `.blend` in Blender, then export them all and rebuild:
 
 ```sh
 tools/export-models.sh
 cargo build --release
+```
+
+The furniture's `.blend` files are themselves made by a script,
+`tools/build-furniture.py`, which builds all four from scratch and exports
+them. Running it replaces the `.blend` files, so change the furniture
+there rather than in Blender, or stop using the script for that model:
+
+```sh
+env -u LD_LIBRARY_PATH blender --background --factory-startup \
+  --python tools/build-furniture.py
 ```
 
 ## How it works
@@ -278,3 +316,15 @@ brp world.query '{"data":{"components":["hypr_world::windows::DesktopWindow"]}}'
 brp world.get_resources \
     '{"resource":"bevy_state::state::resources::State<hypr_world::flight::WorldState>"}' | jq '.result.value'
 ```
+
+## Credits
+
+This repo's MIT license (LICENSE) does not cover the files below, which keep
+their own licenses.
+
+* The party blower the red button downstairs blows
+  (`src/button/partyblower.wav`) is
+  ["partyblower"](https://pixabay.com/sound-effects/film-special-effects-partyblower-226659/)
+  from [Pixabay](https://pixabay.com/), under the
+  [Pixabay Content License](https://pixabay.com/service/license-summary/),
+  not MIT. See `src/button/partyblower-license.txt`.

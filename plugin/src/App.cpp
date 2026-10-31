@@ -23,6 +23,7 @@
 #include <hyprland/src/state/MonitorState.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -106,6 +107,20 @@ uint64_t g_laterRedirect  = 0;
 // to be moved to the workspace underneath it.
 std::vector<PHLWINDOWREF> g_redirect;
 
+// How long after a click on an empty seat what opens still goes to its
+// workspace: time to pick from the launcher, and for the app to start. And
+// once a window has gone there, how long others still follow it, for an app
+// that opens a splash first.
+constexpr auto kOpenOnTimeout = std::chrono::seconds(30);
+constexpr auto kOpenOnFollow  = std::chrono::seconds(2);
+
+// The workspace a click on an empty seat opens windows onto, and until when.
+struct SOpenOn {
+    int64_t           id = 0;
+    Clock::time_point until;
+};
+std::optional<SOpenOn> g_openOn;
+
 void check(const Config::Actions::ActionResult& result, const char* what) {
     if (!result)
         Log::logger->log(Log::ERR, "[hypr-world] {}: {}", what, result.error().message);
@@ -136,6 +151,16 @@ PHLWORKSPACE specialWorkspace(const PHLMONITOR& monitor) {
     if (!monitor)
         return nullptr;
     return State::workspaceState()->create(id, monitor->m_id, name);
+}
+
+// Workspace `id`, made on `monitor` if it does not exist yet and is a
+// numbered one.
+PHLWORKSPACE workspaceById(int64_t id, const PHLMONITOR& monitor) {
+    if (auto workspace = State::workspaceState()->query().id(id).run())
+        return workspace;
+    if (id <= 0)
+        return nullptr;
+    return State::workspaceState()->create(id, monitor->m_id, std::to_string(id));
 }
 
 // The monitor showing the app's special workspace, if any is.
@@ -381,30 +406,52 @@ void onTick(SP<CEventLoopTimer> self, void*) {
     self->updateTimeout(kTick);
 }
 
+// Whether a click on an empty seat is still opening windows onto it.
+bool openingOn(Clock::time_point now) {
+    if (g_openOn && now > g_openOn->until)
+        g_openOn.reset();
+    return g_openOn.has_value();
+}
+
 // A window opens on the focused workspace, which while the app is in view
 // is its special one, under the app. Each that did goes to the workspace
 // underneath instead, the one the crosshair last rested on, so an app
-// launched from the app (rofi, a bind) hangs on that frame. Silently: the
-// workspace does not change, and the app keeps the focus.
+// launched from the app (rofi, a bind) hangs on that frame. After a click on
+// an empty seat (openOn), each that opens goes to that seat's workspace,
+// wherever it opened: a backend's app has no window here, so nothing opens
+// on its special workspace. Silently: the workspace does not change, and
+// the app keeps the focus.
 void redirectNow() {
     auto windows = std::exchange(g_redirect, {});
 
-    const auto monitor = shownOn();
+    const auto now     = Clock::now();
+    const auto on      = monitor();
     const auto special = specialWorkspace(nullptr);
     const auto app     = window();
-    if (!monitor || !special || !monitor->m_activeWorkspace)
+    if (!on || !inView())
+        return;
+
+    const bool   seat   = openingOn(now);
+    PHLWORKSPACE target = seat ? workspaceById(g_openOn->id, on) : nullptr;
+    if (!target)
+        target = on->m_activeWorkspace;
+    if (!target)
         return;
 
     PHLWINDOW moved;
     for (const auto& ref : windows) {
         const auto window = ref.lock();
-        if (!window || !Desktop::View::validMapped(window) || window == app || window->m_workspace != special)
+        if (!window || !Desktop::View::validMapped(window) || window == app || !window->m_workspace || window->m_workspace == target)
             continue;
-        check(Config::Actions::moveToWorkspace(monitor->m_activeWorkspace, true, window), "moving a new window under the app");
+        if (window->m_workspace != special && !seat)
+            continue;
+        check(Config::Actions::moveToWorkspace(target, true, window), "moving a new window under the app");
         moved = window;
     }
     if (!moved)
         return;
+    if (seat)
+        g_openOn->until = std::min(g_openOn->until, now + kOpenOnFollow);
 
     // The new window took the focus, and the move hands it on to whatever is
     // left on the special workspace: give it back to the app, as showNow does.
@@ -429,14 +476,15 @@ void startListeners() {
     auto& events = Event::bus()->m_events;
 
     // The launched app's window, when it maps, and any other that opens
-    // under the app while it is in view (redirectNow).
+    // under the app while it is in view, or anywhere after a click on an
+    // empty seat (redirectNow).
     g_listeners.windowOpen = events.window.open.listen([](PHLWINDOW window) {
         try {
             if (!window)
                 return;
             if (g_showWhenReady && window->getPID() == Server::peerPid())
                 later(g_laterShow, showNow);
-            else if (shownOn() && window->m_workspace && window->m_workspace == specialWorkspace(nullptr)) {
+            else if (inView() && window->m_workspace && (window->m_workspace == specialWorkspace(nullptr) || openingOn(Clock::now()))) {
                 g_redirect.emplace_back(window);
                 later(g_laterRedirect, redirectNow);
             }
@@ -455,6 +503,7 @@ void startListeners() {
 void shutdown() {
     g_listeners = {};
     g_redirect.clear();
+    g_openOn.reset();
 
     for (uint64_t* slot : {&g_laterShow, &g_laterWorkspace, &g_laterRedirect})
         cancelLater(*slot);
@@ -576,6 +625,7 @@ void fade(float opacity) {
 
 void hidden() {
     g_leaving.reset();
+    g_openOn.reset();
     Input::leave("toggle");
     later(g_laterShow, hideNow);
 }
@@ -610,6 +660,12 @@ std::vector<PHLWINDOW> live() {
 void showWorkspace(int64_t id) {
     // changeWorkspace keeps the app's special workspace open on top.
     check(Config::Actions::changeWorkspace(std::to_string(id)), "changing workspace");
+}
+
+void openOn(int64_t id, std::string_view command) {
+    g_openOn = SOpenOn{.id = id, .until = Clock::now() + kOpenOnTimeout};
+    if (!command.empty() && !Config::Supplementary::executor()->spawnRaw(std::string(command)))
+        Log::logger->log(Log::ERR, "[hypr-world] could not run the launcher: {}", command);
 }
 
 // The mapped window at `address`, never the app's own.

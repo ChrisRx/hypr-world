@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{Receiver, Sender, channel},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bevy::{
@@ -541,6 +541,10 @@ fn button_code(button: MouseButton) -> u32 {
 /// Wayland's axis units for one wheel step, as libinput gives them.
 const STEP: f64 = 15.0;
 
+/// How long after a click on an empty seat the window losing the focus is
+/// to the launcher it ran.
+const LAUNCHER_HOLD: Duration = Duration::from_secs(5);
+
 /// What the window got, while the app holds the mouse, into the nested
 /// Hyprland and out of Bevy's input, before Bevy reads it. The plugin's
 /// keys and buttons, written last update by `drain`, are told apart by
@@ -555,8 +559,11 @@ pub(super) fn forward(
     mut buttons: ResMut<Messages<MouseButtonInput>>,
     mut wheels: ResMut<Messages<MouseWheel>>,
     mut focus: MessageReader<WindowFocused>,
+    mut launched: ResMut<super::Launched>,
     mut held: Local<(HashSet<u32>, HashSet<u32>)>,
     mut holding: Local<bool>,
+    // Away at the launcher, with the pointer to take again on the way back.
+    mut away: Local<bool>,
 ) {
     let Some(injector) = glue.inject.as_ref() else {
         return;
@@ -564,11 +571,24 @@ pub(super) fn forward(
     let (held_keys, held_buttons) = &mut *held;
 
     // Away from the window, the session takes the pointer back: so does
-    // the nested Hyprland's input.
-    if focus.read().any(|f| !f.focused) && cursor.grab_mode == CursorGrabMode::Locked {
-        glue.send("release");
-        cursor.grab_mode = CursorGrabMode::None;
-        cursor.visible = true;
+    // the nested Hyprland's input, unless it went to the launcher a click
+    // on an empty seat ran, and then the pointer is taken again once the
+    // window has the focus back.
+    let at_launcher = launched.0.is_some_and(|at| at.elapsed() < LAUNCHER_HOLD);
+    for focused in focus.read().map(|f| f.focused) {
+        if !focused && cursor.grab_mode == CursorGrabMode::Locked {
+            if at_launcher {
+                *away = true;
+            } else {
+                glue.send("release");
+            }
+            cursor.grab_mode = CursorGrabMode::None;
+            cursor.visible = true;
+        } else if focused && std::mem::take(&mut *away) {
+            launched.0 = None;
+            cursor.grab_mode = CursorGrabMode::Locked;
+            cursor.visible = false;
+        }
     }
 
     let locked = glue.connected && cursor.grab_mode == CursorGrabMode::Locked;
@@ -585,23 +605,30 @@ pub(super) fn forward(
     }
     // Just taken: what came before, the click that took it among it, is not
     // the nested Hyprland's.
-    if !std::mem::replace(&mut *holding, true) {
-        keys.drain().for_each(drop);
-        buttons.drain().for_each(drop);
-        wheels.drain().for_each(drop);
-        return;
-    }
+    let just_taken = !std::mem::replace(&mut *holding, true);
+    // A release whose press never went in is Bevy's own, its press having
+    // been: the click that took the pointer, or a key held through it. It
+    // stays Bevy's, or Bevy would hold the button down until the next
+    // release and take the next press for nothing new.
+    let mut own_keys = Vec::new();
+    let mut own_buttons = Vec::new();
 
     for key in keys.drain() {
-        let Some(code) = evdev(key.key_code) else {
-            continue;
-        };
         if key.window == Entity::PLACEHOLDER || key.repeat {
             continue;
         }
         let pressed = key.state == ButtonState::Pressed;
-        if pressed && held_keys.insert(code) || !pressed && held_keys.remove(&code) {
-            injector.send(Inject::Key(code, pressed));
+        match evdev(key.key_code) {
+            Some(code) if !just_taken && pressed => {
+                if held_keys.insert(code) {
+                    injector.send(Inject::Key(code, true));
+                }
+            }
+            Some(code) if !just_taken && held_keys.remove(&code) => {
+                injector.send(Inject::Key(code, false));
+            }
+            _ if !pressed => own_keys.push(key),
+            _ => {}
         }
     }
     for press in buttons.drain() {
@@ -610,10 +637,34 @@ pub(super) fn forward(
         }
         let code = button_code(press.button);
         let pressed = press.state == ButtonState::Pressed;
-        if pressed && held_buttons.insert(code) || !pressed && held_buttons.remove(&code) {
-            injector.send(Inject::Button(code, pressed));
+        if just_taken {
+            if !pressed {
+                own_buttons.push(press);
+            }
+        } else if pressed {
+            if held_buttons.insert(code) {
+                injector.send(Inject::Button(code, true));
+            }
+        } else if held_buttons.remove(&code) {
+            injector.send(Inject::Button(code, false));
+        } else {
+            own_buttons.push(press);
         }
     }
+    // As the plugin's are, so that the next drain passes them over.
+    keys.write_batch(own_keys.into_iter().map(|key| KeyboardInput {
+        window: Entity::PLACEHOLDER,
+        ..key
+    }));
+    buttons.write_batch(own_buttons.into_iter().map(|press| MouseButtonInput {
+        window: Entity::PLACEHOLDER,
+        ..press
+    }));
+    if just_taken {
+        wheels.drain().for_each(drop);
+        return;
+    }
+
     for wheel in wheels.drain() {
         if wheel.window == Entity::PLACEHOLDER {
             continue;
@@ -639,6 +690,78 @@ pub(super) fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The click that takes the pointer goes to Bevy, and so does its
+    /// release, though it comes once the pointer is taken, and only once:
+    /// the next click is a new press, and nothing went into the nested
+    /// Hyprland for either.
+    #[test]
+    fn the_click_that_takes_the_pointer_is_let_go() {
+        use std::os::unix::net::UnixStream;
+
+        use bevy::input::{InputPlugin, InputSystems};
+
+        let (tx, rx) = channel();
+        let mut glue = Glue::connected_to(UnixStream::pair().expect("a socket pair").0);
+        glue.backend = true;
+        glue.inject = Some(Injector(tx));
+
+        // The plugin's input, written after `forward`, as `drain` writes it.
+        #[derive(Resource, Default)]
+        struct Plugin(Option<MouseButtonInput>);
+        fn plugin_says(mut plugin: ResMut<Plugin>, mut buttons: MessageWriter<MouseButtonInput>) {
+            if let Some(press) = plugin.0.take() {
+                buttons.write(press);
+            }
+        }
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, InputPlugin))
+            .add_message::<WindowFocused>()
+            .insert_resource(glue)
+            .init_resource::<super::super::Launched>()
+            .init_resource::<Plugin>()
+            .add_systems(
+                PreUpdate,
+                (forward, plugin_says).chain().before(InputSystems),
+            );
+        let window = app
+            .world_mut()
+            .spawn((PrimaryWindow, CursorOptions::default()))
+            .id();
+        let click = |app: &mut App, from: Entity, state: ButtonState| {
+            let press = MouseButtonInput {
+                button: MouseButton::Left,
+                state,
+                window: from,
+            };
+            if from == Entity::PLACEHOLDER {
+                app.world_mut().resource_mut::<Plugin>().0 = Some(press);
+            } else {
+                app.world_mut().write_message(press);
+            }
+            app.update();
+            app.world().resource::<ButtonInput<MouseButton>>().clone()
+        };
+
+        // Pressed before the pointer is taken, released after.
+        let mouse = click(&mut app, window, ButtonState::Pressed);
+        assert!(mouse.just_pressed(MouseButton::Left));
+        app.world_mut()
+            .get_mut::<CursorOptions>(window)
+            .expect("a cursor")
+            .grab_mode = CursorGrabMode::Locked;
+        let mouse = click(&mut app, window, ButtonState::Released);
+        assert!(mouse.just_released(MouseButton::Left), "let go");
+        app.update();
+        let mouse = app.world().resource::<ButtonInput<MouseButton>>();
+        assert!(!mouse.just_released(MouseButton::Left), "once");
+
+        // The plugin's next click, as it sends it back.
+        let mouse = click(&mut app, Entity::PLACEHOLDER, ButtonState::Pressed);
+        assert!(mouse.just_pressed(MouseButton::Left), "a new press");
+        assert!(rx.try_recv().is_err(), "nothing went in");
+    }
 
     #[test]
     fn keys_match_the_plugins() {

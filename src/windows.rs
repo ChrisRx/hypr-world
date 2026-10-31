@@ -1,8 +1,9 @@
 //! The windows on the walls: an entity per window on the desktop, and on a
 //! framed workspace its quad, a child of its frame seated from its live 2D
 //! box, its texture kept up to date from the capture while it is in view.
-//! And what the crosshair does with them: aim, and the dwell that switches
-//! workspace.
+//! And what the crosshair does with them: aim, the dwell that switches
+//! workspace, and a click on an empty seat, which opens the launcher onto
+//! it.
 
 use std::{
     collections::HashMap,
@@ -25,14 +26,17 @@ use bevy::{
 
 use crate::{
     FlyCamera, WorldSystems,
+    button::{self, AimedPart},
     capture::{self, DmabufFrame, PixelLayout, ShmFrame},
     config::WorldConfig,
     flight::WorldState,
-    glue::{self, Desktop, DesktopChange, InputMode, Kind, Said, Window2d},
+    glue::{self, Crosshair, Desktop, DesktopChange, InputMode, Kind, Said, Window2d},
     import::{self, BufferFormat},
+    launcher::Launcher,
     layout,
     materials::{YuvMaterial, YuvParams},
     scene::{House, Vacant, WorkspaceIndex},
+    shadow,
     stats::Stats,
     wake::WakeAt,
 };
@@ -1326,6 +1330,7 @@ pub fn plugin(app: &mut App) {
 fn crosshair(app: &mut App) {
     app.init_resource::<Aimed>()
         .init_resource::<AimedFrame>()
+        .init_resource::<AimedPart>()
         .init_resource::<AimLine>()
         .add_systems(
             OnExit(WorldState::In),
@@ -1335,8 +1340,19 @@ fn crosshair(app: &mut App) {
         .add_systems(
             Update,
             (
-                aim.run_if(in_state(WorldState::In).and_then(not(in_state(InputMode::Off)))),
+                aim.run_if(
+                    in_state(WorldState::In)
+                        .and_then(not(in_state(InputMode::Off)))
+                        .and_then(shadow::desktop_in_reach),
+                ),
                 dwell,
+                open_here.run_if(
+                    in_state(WorldState::In)
+                        .and_then(not(in_state(InputMode::Off)))
+                        .and_then(in_state(Launcher::Stowed)),
+                ),
+                mark_crosshair
+                    .run_if(resource_changed::<AimedFrame>.or_else(resource_changed::<AimedPart>)),
             )
                 .chain()
                 .in_set(WorldSystems::Aim),
@@ -1551,12 +1567,14 @@ pub fn aim(
     windows: Query<(Entity, &DesktopWindow, &WindowQuad)>,
     surfaces: Query<(Entity, &SurfaceQuad, &ChildOf)>,
     vacant: Query<(Entity, &Vacant)>,
+    parts: button::Parts,
     // Where the camera and the quads are in the world as of now: their
     // `GlobalTransform`s are only worked out in `PostUpdate`, and the body
     // carrying the camera, a frame or a window may have moved since.
     places: TransformHelper,
     mut aimed: ResMut<Aimed>,
     mut aimed_frame: ResMut<AimedFrame>,
+    mut aimed_part: ResMut<AimedPart>,
     mut said: ResMut<AimLine>,
 ) {
     // The camera's center ray, where the crosshair is.
@@ -1617,11 +1635,22 @@ pub fn aim(
         }
     }
 
+    // The pedestal downstairs, in front of a window behind it.
+    let part = parts.aimed(ray, &places);
+    if let Some((t, _)) = part
+        && hit.is_some_and(|(nearest, ..)| t < nearest)
+    {
+        hit = None;
+    }
+    let part = part.filter(|_| hit.is_none()).map(|(_, part)| part);
+    aimed_part.set_if_neq(AimedPart(part));
+
     aimed.0 = hit.map(|(_, address, ..)| address);
-    // A vacant frame has no windows, so it counts only off every window.
+    // A vacant frame has no windows, so it counts only off every window and
+    // the pedestal.
     aimed_frame.0 = vacant
         .iter()
-        .filter(|_| hit.is_none())
+        .filter(|_| hit.is_none() && part.is_none())
         .filter_map(|(entity, vacant)| {
             let place = places.compute_global_transform(entity).ok()?;
             let (t, u, v) = crosshair_on(ray, &place)?;
@@ -1646,10 +1675,12 @@ fn aim_at_nothing(
     glue: Res<glue::Glue>,
     mut aimed: ResMut<Aimed>,
     mut aimed_frame: ResMut<AimedFrame>,
+    mut aimed_part: ResMut<AimedPart>,
     mut said: ResMut<AimLine>,
 ) {
     aimed.0 = None;
     aimed_frame.0 = None;
+    aimed_part.set_if_neq(AimedPart(None));
     said.say(&glue, "aim -".to_string());
 }
 
@@ -1658,10 +1689,12 @@ fn aim_at_nothing(
 fn forget_aim(
     mut aimed: ResMut<Aimed>,
     mut aimed_frame: ResMut<AimedFrame>,
+    mut aimed_part: ResMut<AimedPart>,
     mut said: ResMut<AimLine>,
 ) {
     aimed.0 = None;
     aimed_frame.0 = None;
+    aimed_part.set_if_neq(AimedPart(None));
     said.0.clear();
 }
 
@@ -1681,16 +1714,13 @@ pub fn crosshair_on(ray: Ray3d, quad: &GlobalTransform) -> Option<(f32, f32, f32
 }
 
 /// Resting the crosshair on a window of another workspace switches to that
-/// workspace, so leaving the world lands on what you were looking at. Resting
-/// it on a vacant frame (scene.rs `Vacant`) makes its workspace, so a window
-/// opened from the world goes on it (the plugin's App.cpp `redirectNow`).
+/// workspace, so leaving the world lands on what you were looking at.
 #[allow(clippy::too_many_arguments)]
 pub fn dwell(
     time: Res<Time<Real>>,
     glue: Res<glue::Glue>,
     desktop: Res<Desktop>,
     aimed: Res<Aimed>,
-    aimed_frame: Res<AimedFrame>,
     index: Res<WindowIndex>,
     windows: Query<&DesktopWindow>,
     mut resting: Local<Option<Resting>>,
@@ -1699,12 +1729,7 @@ pub fn dwell(
     let target = aimed
         .0
         .and_then(|address| windows.get(index.get(address)?).ok())
-        .map(|window| (RestingOn::Window(window.address), window.workspace))
-        .or_else(|| {
-            aimed_frame
-                .0
-                .map(|workspace| (RestingOn::Frame(workspace), workspace))
-        })
+        .map(|window| (window.address, window.workspace))
         .filter(|&(_, workspace)| desktop.active != Some(workspace));
     let Some((on, workspace)) = target else {
         *resting = None;
@@ -1714,7 +1739,7 @@ pub fn dwell(
     let now = Instant::now();
     let since = match resting.take() {
         Some(rest) if rest.on == on => rest.since,
-        // A window or frame newly rested on: its time starts now.
+        // A window newly rested on: its time starts now.
         _ => now,
     };
 
@@ -1728,22 +1753,49 @@ pub fn dwell(
     }
 }
 
-/// What the crosshair rests on, and since when. Timed by the wall clock,
-/// not `Time<Real>`'s delta: with pipelined rendering that is the render
-/// world's last frame, so the update that wakes the app after a pause would
-/// credit the pause an update late, and a dwell nothing else wakes the app
-/// for could take twice as long.
+/// The window the crosshair rests on, by address, and since when. Timed by
+/// the wall clock, not `Time<Real>`'s delta: with pipelined rendering that
+/// is the render world's last frame, so the update that wakes the app after
+/// a pause would credit the pause an update late, and a dwell nothing else
+/// wakes the app for could take twice as long.
 pub struct Resting {
-    on: RestingOn,
+    on: u64,
     since: Instant,
 }
 
-/// What the crosshair rests on: a window, by address, or a vacant frame, by
-/// its workspace.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RestingOn {
-    Window(u64),
-    Frame(i64),
+/// A click on a vacant frame (scene.rs `Vacant`) runs the launcher, and the
+/// plugin sends what it opens to that frame's workspace, made for it, rather
+/// than the one underneath, which stays (App.cpp `redirectNow`).
+fn open_here(
+    glue: Res<glue::Glue>,
+    config: Res<WorldConfig>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    aimed_frame: Res<AimedFrame>,
+    mut launched: ResMut<glue::Launched>,
+) {
+    if let Some(workspace) = aimed_frame.0
+        && mouse.just_pressed(MouseButton::Left)
+    {
+        glue.send(&format!("launch {workspace} {}", config.launcher.trim()));
+        launched.0 = Some(Instant::now());
+    }
+}
+
+/// The crosshair is a plus on a vacant frame, where a click opens something,
+/// and on the pedestal downstairs, and a dot elsewhere.
+fn mark_crosshair(
+    aimed_frame: Res<AimedFrame>,
+    aimed_part: Res<AimedPart>,
+    mut crosshair: Query<(&Crosshair, &mut Visibility)>,
+) {
+    let plus = aimed_frame.0.is_some() || aimed_part.0.is_some();
+    for (part, mut visibility) in &mut crosshair {
+        visibility.set_if_neq(if (*part == Crosshair::Plus) == plus {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
 }
 
 #[cfg(test)]
@@ -2152,8 +2204,9 @@ mod frames {
     use crate::{
         config::WorldConfig,
         glue::{Glue, Monitor},
-        layout::{self, Layout, WALLS},
+        layout::{self, Layout},
         scene::{self, Workspace},
+        seats::Seats,
     };
 
     const MONITOR: Vec2 = Vec2::new(1440.0, 960.0);
@@ -2185,7 +2238,7 @@ mod frames {
     /// frame's center by where the window is in 2D, out from it by the
     /// window's lift, and turned to face the room.
     fn hung(layout: &Layout, frame: &layout::Frame) -> Transform {
-        let wall = WALLS[frame.wall];
+        let wall = frame.wall;
         let c = RECT.center() - layout.area.min;
         let translation = frame.center
             + wall.right * (c.x - layout.area.width() / 2.0) * layout.k
@@ -2242,6 +2295,8 @@ mod frames {
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<YuvMaterial>()
+        // The furniture's models, not loaded.
+        .init_asset::<bevy::world_serialization::WorldAsset>()
         .insert_resource(glue)
         .insert_resource(Captures(capture::Capture::idle()))
         .insert_resource(Desktop {
@@ -2253,7 +2308,11 @@ mod frames {
             active: Some(1),
             shown: false,
         })
-        .init_resource::<WorldConfig>()
+        .insert_resource(WorldConfig {
+            workspaces: 3,
+            ..default()
+        })
+        .init_resource::<Seats>()
         .init_resource::<House>()
         .init_resource::<scene::WorkspaceIndex>()
         .init_resource::<WindowIndex>()
@@ -2292,31 +2351,37 @@ mod frames {
         app.world().resource::<Aimed>().0
     }
 
-    /// A window on each wall's frame hangs where it did when everything was
-    /// placed in room coordinates, the spare on the fourth wall. A fourth
-    /// workspace moves three frames to other walls and the fourth along its
-    /// own, and each frame's window goes with it, the same entity, and the
-    /// crosshair finds it there, and the spare after them. A window moved
-    /// to another workspace moves to that frame.
+    /// A window on each seat's frame hangs where it did when everything was
+    /// placed in room coordinates, and a seat with no workspace is vacant. A
+    /// workspace past the three seats goes downstairs, and each window hangs
+    /// on its frame, a child of it, and the crosshair finds it there, and
+    /// the vacant seat. A window moved to another workspace moves to that
+    /// frame.
     #[test]
     fn windows_hang_on_their_frames() {
         let (world_end, _plugin) = UnixStream::pair().expect("a socket pair");
         let (mut app, camera) = hanging(Glue::connected_to(world_end));
         app.init_resource::<Aimed>()
             .init_resource::<AimedFrame>()
+            .init_resource::<AimedPart>()
             .init_resource::<AimLine>()
             .add_systems(Update, aim.in_set(WorldSystems::Aim));
 
-        let mut windows: Vec<Entity> = (1..=3).map(|id| window_on(&mut app, id)).collect();
+        let mut windows: Vec<Entity> = (1..=2).map(|id| window_on(&mut app, id)).collect();
         app.update();
-        let walls = |app: &App| {
-            app.world()
-                .resource::<House>()
-                .layout
-                .as_ref()
-                .map(|l| l.frames.iter().map(|f| f.wall).collect::<Vec<_>>())
+        let seats = |app: &App| {
+            app.world().resource::<House>().layout.as_ref().map(|l| {
+                l.frames
+                    .iter()
+                    .map(|f| (f.workspace, f.room, f.side))
+                    .collect::<Vec<_>>()
+            })
         };
-        assert_eq!(walls(&app), Some(vec![0, 1, 2, 3]), "one frame a wall");
+        assert_eq!(
+            seats(&app),
+            Some(vec![(1, 0, 1), (2, 0, 2), (3, 0, 3)]),
+            "a seat each upstairs"
+        );
         for &window in &windows {
             assert_hung(&app, window);
         }
@@ -2324,9 +2389,9 @@ mod frames {
         windows.push(window_on(&mut app, 4));
         app.update();
         assert_eq!(
-            walls(&app),
-            Some(vec![0, 0, 1, 2, 3]),
-            "two on the front wall"
+            seats(&app),
+            Some(vec![(1, 0, 1), (2, 0, 2), (3, 0, 3), (4, 1, 1)]),
+            "the fourth downstairs"
         );
         for &window in &windows {
             assert_hung(&app, window);
@@ -2336,7 +2401,7 @@ mod frames {
                 .expect("a quad")
                 .size = UVec2::new(600, 400);
         }
-        for (address, &window) in (1..).zip(&windows) {
+        for (&address, &window) in [1, 2, 4].iter().zip(&windows) {
             assert_eq!(
                 aimed_from_before(&mut app, camera, window),
                 Some(address),
@@ -2344,21 +2409,18 @@ mod frames {
             );
         }
 
-        let spare = app
+        let vacant = app
             .world_mut()
             .query::<(Entity, &Vacant)>()
             .iter(app.world())
             .map(|(entity, vacant)| (entity, vacant.workspace))
             .collect::<Vec<_>>();
-        assert!(
-            matches!(spare[..], [(_, 5)]),
-            "the spare, vacant: {spare:?}"
-        );
-        assert_eq!(aimed_from_before(&mut app, camera, spare[0].0), None);
+        assert!(matches!(vacant[..], [(_, 3)]), "seat 3, vacant: {vacant:?}");
+        assert_eq!(aimed_from_before(&mut app, camera, vacant[0].0), None);
         assert_eq!(
             app.world().resource::<AimedFrame>().0,
-            Some(5),
-            "the crosshair on the spare"
+            Some(3),
+            "the crosshair on the vacant seat"
         );
 
         app.world_mut()
@@ -2384,7 +2446,8 @@ mod frames {
         app.add_plugins(bevy::state::app::StatesPlugin)
             .init_state::<WorldState>()
             .init_state::<InputMode>()
-            .init_resource::<WakeAt>();
+            .init_resource::<WakeAt>()
+            .init_resource::<shadow::Shadow>();
         crosshair(&mut app);
         app.world_mut()
             .resource_mut::<NextState<InputMode>>()
@@ -2588,6 +2651,7 @@ mod frames {
             .init_resource::<Stats>()
             .init_resource::<Aimed>()
             .init_resource::<AimedFrame>()
+            .init_resource::<AimedPart>()
             .init_resource::<AimLine>()
             .add_message::<glue::Shared>()
             .add_message::<glue::Surfaces>()

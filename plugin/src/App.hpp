@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace World::App {
@@ -73,6 +74,13 @@ std::vector<PHLWINDOW> live();
 
 // Show workspace `id` underneath the app.
 void showWorkspace(int64_t id);
+
+// launch <id> <command>: a click on an empty seat. The command runs as a
+// bind's exec would, and the windows it opens while the app is in view go
+// to workspace `id`, made for them, rather than to the one underneath, which
+// stays. For a while: a launcher left without opening anything leaves no
+// mark past it.
+void openOn(int64_t id, std::string_view command);
 
 // close <addr>: the window the app's rocket hit, closed as Hyprland's own
 // close does, by asking its client, which may still ask about unsaved work.

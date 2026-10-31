@@ -12,19 +12,23 @@ use bevy::{
     asset::{RenderAssetUsages, embedded_asset},
     camera::Exposure,
     ecs::{lifecycle::HookContext, world::DeferredWorld},
+    gltf::GltfAssetLabel,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     math::Affine2,
+    mesh::{Indices, PrimitiveTopology},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    world_serialization::{WorldAsset, WorldAssetRoot},
 };
 
 use crate::{
-    WorldSystems,
+    WorldSystems, button,
     config::WorldConfig,
     font8x8::FONT8X8_BASIC,
     glue::{self, Desktop, DesktopChange, Said},
-    house::{self, Block, Surface},
+    house::{self, Model, Slab, Surface},
     layout::{self, Layout, SCREEN_LIFT},
+    seats::Seats,
     windows::DesktopWindow,
 };
 
@@ -32,6 +36,10 @@ use crate::{
 /// the desktop or the settings change, with the active frame lit.
 pub fn plugin(app: &mut App) {
     embedded_asset!(app, "textures/floorboards.png");
+    embedded_asset!(app, "models/chandelier.glb");
+    embedded_asset!(app, "models/table.glb");
+    embedded_asset!(app, "models/plant.glb");
+    embedded_asset!(app, "models/pedestal.glb");
     app.init_resource::<WorkspaceIndex>()
         .init_resource::<House>()
         .insert_resource(GlobalAmbientLight {
@@ -47,6 +55,7 @@ pub fn plugin(app: &mut App) {
                 relayout.run_if(
                     resource_changed::<Desktop>
                         .or_else(resource_changed::<WorldConfig>)
+                        .or_else(resource_changed::<Seats>)
                         .or_else(glue::any_changed_or_removed::<DesktopWindow>)
                         .or_else(glue::any_changed_or_removed::<Workspace>),
                 ),
@@ -170,7 +179,7 @@ const AMBIENT_LEVEL: f32 = 0.25;
 /// The old ambient was a little blue.
 const AMBIENT_COLOR: Color = Color::linear_rgb(0.96, 0.96, 1.08);
 /// Bevy's diffuse ambient per cd/m², before the exposure.
-const AMBIENT_RESPONSE: f32 = 0.452;
+pub const AMBIENT_RESPONSE: f32 = 0.452;
 /// Linear, as a share of the albedo, at 1 m per unit of a lamp's
 /// `house::Light::intensity`.
 const LAMP_LEVEL: f32 = 6.5;
@@ -206,7 +215,7 @@ fn surface(albedo: Vec3, share: f32, glow: f32) -> StandardMaterial {
 /// albedo·L with the albedo in sRGB. Bevy adds emissive to the lit color,
 /// linear: the two fitted at the old light levels in shade (0.43) and under
 /// a lamp (0.8).
-fn glowing(albedo: Vec3, glow: f32) -> StandardMaterial {
+pub(crate) fn glowing(albedo: Vec3, glow: f32) -> StandardMaterial {
     let level = |light: f32| (glow + (1.0 - glow) * light).powf(2.2);
     let (shade, lamp) = (0.43_f32, 0.8_f32);
     let share = (level(lamp) - level(shade)) / (lamp.powf(2.2) - shade.powf(2.2));
@@ -214,14 +223,15 @@ fn glowing(albedo: Vec3, glow: f32) -> StandardMaterial {
 }
 
 /// The layout the house is built for, and what its frames were built on.
-/// Its workspaces are latched while the world is in view, so frames never
-/// move under you; out of view the house follows the desktop.
+/// The seats are fixed, and the workspaces downstairs are latched while the
+/// world is in view, so frames never move under you; out of view the house
+/// follows the desktop.
 #[derive(Resource, Default)]
 pub struct House {
     pub layout: Option<Layout>,
-    /// Each frame's workspace and the name its label shows. A workspace that
-    /// went while the world was in view leaves its frame vacant, labeled
-    /// with the id, and the spare's label is "+".
+    /// Each frame's workspace and the name its label shows. A seat whose
+    /// workspace does not exist, or a workspace that went while the world
+    /// was in view, leaves its frame vacant, labeled with the id.
     frames: Vec<(Option<Entity>, String)>,
 }
 
@@ -237,9 +247,10 @@ pub struct Shell;
 #[derive(Component)]
 pub struct FramePart;
 
-/// The screen of a frame with no workspace: the spare, which resting the
-/// crosshair on makes (windows.rs `dwell`), or one that went while the world
-/// is in view, which it makes again.
+/// The screen of a frame with no workspace: a seat whose workspace does not
+/// exist yet, or one that went while the world is in view. A click on it
+/// opens the launcher, and what that opens goes to its workspace (windows.rs
+/// `open_here`).
 #[derive(Component)]
 pub struct Vacant {
     pub workspace: i64,
@@ -271,7 +282,18 @@ pub struct Look {
     screen: Handle<StandardMaterial>,
     /// The floor's boards, a tile of them (`BOARDS`).
     boards: Handle<Image>,
+    /// The furniture, by `house::Model`, as `MODELS` lists them.
+    models: [Handle<WorldAsset>; 4],
 }
+
+/// The furniture's models, embedded by `plugin`, each exported from the
+/// .blend beside it (README.md, Models), in the order of `house::Model`.
+const MODELS: [&str; 4] = [
+    "embedded://hypr_world/models/chandelier.glb",
+    "embedded://hypr_world/models/table.glb",
+    "embedded://hypr_world/models/plant.glb",
+    "embedded://hypr_world/models/pedestal.glb",
+];
 
 pub fn setup(
     mut commands: Commands,
@@ -299,12 +321,13 @@ pub fn setup(
                 });
             })
             .load(BOARDS),
+        models: MODELS.map(|path| assets.load(GltfAssetLabel::Scene(0).from_asset(path))),
     });
 }
 
-/// Rebuilds the house when the desktop or the settings change enough to
-/// move or rename anything, and hangs each workspace with a frame where its
-/// frame is: what hangs on it goes along.
+/// Rebuilds the house when the desktop, the seats or the settings change
+/// enough to move or rename anything, and hangs each workspace with a frame
+/// where its frame is: what hangs on it goes along.
 #[allow(clippy::too_many_arguments)]
 pub fn relayout(
     mut commands: Commands,
@@ -313,12 +336,14 @@ pub fn relayout(
     index: Res<WorkspaceIndex>,
     mut workspaces: Query<(&Workspace, &mut Transform)>,
     config: Res<WorldConfig>,
+    seats: Res<Seats>,
     mut house: ResMut<House>,
     look: Res<Look>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     built: Query<Entity, Built>,
-    mut latched: Local<Option<(Vec<i64>, i64)>>,
+    mut latched: Local<Option<(u32, Vec<i64>)>>,
 ) {
     let Some(monitor) = desktop.monitor else {
         if house.layout.is_some() {
@@ -328,31 +353,32 @@ pub fn relayout(
         return;
     };
 
-    // And after them, the spare: an empty frame for a workspace to come.
-    let mut now = layout::framed(desktop.active, windows.iter().map(|w| w.workspace));
-    let spare = layout::spare(now.iter().copied().chain(index.ids()));
-    now.push(spare);
-    let (framed, spare) = if desktop.shown {
-        latched.get_or_insert((now, spare)).clone()
+    // A seat each upstairs, whether its workspace is about or not, and
+    // every other workspace that is about downstairs.
+    let count = seats.count(config.workspaces);
+    let about = layout::framed(desktop.active, windows.iter().map(|w| w.workspace));
+    let now = (
+        count,
+        layout::overflow(count, about.into_iter().chain(index.ids())),
+    );
+    let (count, overflow) = if desktop.shown {
+        latched.get_or_insert(now).clone()
     } else {
         *latched = None;
-        (now, spare)
+        now
     };
+    let upstairs: Vec<i64> = (1..=i64::from(count)).collect();
 
     // A frame shows the whole monitor, bar and all, as the screen does.
     let whole = Rect::from_corners(Vec2::ZERO, monitor.size);
-    let next = Layout::new(&framed, monitor.size, whole, &config.layout);
+    let next = Layout::new(&upstairs, &overflow, monitor.size, whole, &config.layout);
     let frames: Vec<(Option<Entity>, String)> = next
         .frames
         .iter()
         .map(|frame| {
             let entity = index.get(frame.workspace);
             let workspace = entity.and_then(|e| workspaces.get(e).ok()).map(|(w, _)| w);
-            let label = match workspace {
-                None if frame.workspace == spare => "+".to_string(),
-                workspace => label(workspace, frame.workspace),
-            };
-            (entity, label)
+            (entity, label(workspace, frame.workspace))
         })
         .collect();
     if house.layout.as_ref() == Some(&next) && house.frames == frames {
@@ -363,6 +389,7 @@ pub fn relayout(
     build(
         &mut commands,
         &look,
+        &mut meshes,
         &mut materials,
         &mut images,
         &next,
@@ -388,9 +415,11 @@ fn label(workspace: Option<&Workspace>, id: i64) -> String {
 }
 
 /// The shell, under its root, and each frame's parts, on its workspace.
+#[allow(clippy::too_many_arguments)]
 fn build(
     commands: &mut Commands,
     look: &Look,
+    meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     images: &mut Assets<Image>,
     layout: &Layout,
@@ -399,15 +428,10 @@ fn build(
 ) {
     let shell = house::shell(layout);
 
-    let floor_size = shell
-        .blocks
-        .iter()
-        .find(|b| b.surface == Surface::Floor)
-        .map_or(Vec3::ONE, Block::size);
     let floor = materials.add(StandardMaterial {
         base_color_texture: Some(look.boards.clone()),
-        // The top face's u runs along x and v along z, over the whole slab.
-        uv_transform: Affine2::from_scale(Vec2::new(floor_size.x, floor_size.z) / BOARDS_TILE),
+        // A slab's u runs along x and v along z, in meters (`slab_mesh`).
+        uv_transform: Affine2::from_scale(Vec2::ONE / BOARDS_TILE),
         perceptual_roughness: ROUGHNESS,
         ..default()
     });
@@ -427,9 +451,8 @@ fn build(
         unlit: true,
         ..default()
     });
+    let brass = material(glowing(Vec3::new(0.82, 0.64, 0.3), 0.3));
     let wood = material(plain(Vec3::new(0.36, 0.22, 0.12)));
-    let pot = material(plain(Vec3::new(0.72, 0.38, 0.26)));
-    let leaves = material(plain(Vec3::new(0.22, 0.5, 0.22)));
     let bezel_idle = material(plain(Vec3::new(0.07, 0.075, 0.085)));
     let bezel_lit = material(glowing(ACCENT * 0.9, 0.6));
 
@@ -441,15 +464,16 @@ fn build(
             Surface::Ceiling => &ceiling,
             Surface::Trim => &trim,
             Surface::Lamp => &lamp,
-            Surface::Wood => &wood,
-            Surface::Pot => &pot,
-            Surface::Leaves => &leaves,
+            Surface::Brass => &brass,
+            Surface::Wood | Surface::Step => &wood,
         };
         let mut entity = commands.spawn((
             ChildOf(root),
             Mesh3d(look.cube.clone()),
             MeshMaterial3d(surface.clone()),
-            Transform::from_translation(block.center()).with_scale(block.size()),
+            Transform::from_translation(block.center)
+                .with_rotation(block.rotation)
+                .with_scale(block.size),
         ));
         if block.solid() {
             // A unit box, scaled with the block like its mesh.
@@ -457,9 +481,32 @@ fn build(
         }
     }
 
+    for slab in &shell.slabs {
+        let surface = if slab.surface == Surface::Floor {
+            &floor
+        } else {
+            &ceiling
+        };
+        let points: Vec<Vec3> = slab
+            .outline
+            .iter()
+            .flat_map(|&p| [p, p + Vec3::Y * slab.thickness])
+            .collect();
+        let mut entity = commands.spawn((
+            ChildOf(root),
+            Mesh3d(meshes.add(slab_mesh(slab))),
+            MeshMaterial3d(surface.clone()),
+            Transform::default(),
+        ));
+        if let Some(collider) = Collider::convex_hull(&points) {
+            entity.insert((Solid, RigidBody::Static, collider));
+        }
+    }
+
     // No shadows: the light goes through the walls to their outsides, which
     // nobody sees, and under the table, as it always did.
-    let range = 2.0 * Vec3::new(layout.half_x, layout.height, layout.half_z).length();
+    let radius = layout.rooms.iter().map(|r| r.radius()).fold(0.0, f32::max);
+    let range = 2.0 * Vec2::new(radius, layout.height).length();
     for light in &shell.lights {
         commands.spawn((
             ChildOf(root),
@@ -474,15 +521,45 @@ fn build(
         ));
     }
 
-    // The panes in the openings: felt, not seen.
+    // The panes in the openings and the ramp under the stairs: felt, not
+    // seen.
     for glass in &shell.glass {
-        let size = glass.size();
+        let size = glass.size;
         commands.spawn((
             ChildOf(root),
             Solid,
             RigidBody::Static,
             Collider::cuboid(size.x, size.y, size.z),
-            Transform::from_translation(glass.center()),
+            Transform::from_translation(glass.center).with_rotation(glass.rotation),
+        ));
+    }
+
+    // The furniture, the pedestal rigged for its button once it is in.
+    for placed in &shell.models {
+        let mut entity = commands.spawn((
+            ChildOf(root),
+            WorldAssetRoot(look.models[placed.model as usize].clone()),
+            Transform::from_translation(placed.at).with_rotation(placed.turn),
+        ));
+        if let (Model::Pedestal, Some(pedestal)) = (placed.model, shell.pedestal) {
+            button::rig(&mut entity, pedestal);
+        }
+    }
+
+    // The sign over the way down: pale words on its dark board.
+    for sign in &shell.signs {
+        let mask = images.add(label_image(sign.text));
+        commands.spawn((
+            ChildOf(root),
+            Mesh3d(look.quad.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color_texture: Some(mask),
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..glowing(Vec3::new(0.95, 0.9, 0.78), 0.7)
+            })),
+            Transform::from_translation(sign.center)
+                .with_rotation(Quat::from_rotation_y(sign.yaw))
+                .with_scale(sign.size.extend(1.0)),
         ));
     }
 
@@ -492,8 +569,9 @@ fn build(
     let screen = Transform::from_xyz(0.0, 0.0, SCREEN_LIFT).with_scale(layout.frame.extend(1.0));
 
     for (frame, (workspace, name)) in layout.frames.iter().zip(frames) {
-        // A frame with no workspace, the spare or one that went while the world
-        // is in view, hangs on the shell where its frame is, and goes with it.
+        // A frame with no workspace, a seat for one not made yet or one that
+        // went while the world is in view, hangs on the shell where its
+        // frame is, and goes with it.
         let (parent, owned) = match *workspace {
             Some(workspace) => (workspace, true),
             None => (
@@ -566,6 +644,61 @@ fn build(
             ))
             .insert_if(FramePart, || owned);
     }
+}
+
+/// A slab's mesh: its top, its bottom and its edges, each face flat,
+/// facing out, its uv in meters: x and z on the top and the bottom, along
+/// and up on the edges.
+fn slab_mesh(slab: &Slab) -> Mesh {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    // A flat convex face, its corners in order either way round, as a fan
+    // wound to face `normal`.
+    let mut face = |corners: &[Vec3], normal: Vec3, uv: &dyn Fn(Vec3) -> Vec2| {
+        let base = positions.len() as u32;
+        for &corner in corners {
+            positions.push(corner.to_array());
+            normals.push(normal.to_array());
+            uvs.push(uv(corner).to_array());
+        }
+        for i in 1..corners.len() as u32 - 1 {
+            let (a, b, c) = (corners[0], corners[i as usize], corners[i as usize + 1]);
+            let (j, k) = if (b - a).cross(c - a).dot(normal) >= 0.0 {
+                (i, i + 1)
+            } else {
+                (i + 1, i)
+            };
+            indices.extend([base, base + j, base + k]);
+        }
+    };
+
+    let up = Vec3::Y * slab.thickness;
+    let bottom = &slab.outline;
+    let top: Vec<Vec3> = bottom.iter().map(|&p| p + up).collect();
+    let plan = |p: Vec3| Vec2::new(p.x, p.z);
+    face(&top, Vec3::Y, &plan);
+    face(bottom, Vec3::NEG_Y, &plan);
+
+    let middle = bottom.iter().sum::<Vec3>() / bottom.len() as f32;
+    for (i, &a) in bottom.iter().enumerate() {
+        let b = bottom[(i + 1) % bottom.len()];
+        let along = (b - a).normalize();
+        let out = ((a + b) / 2.0 - middle).with_y(0.0).normalize();
+        face(&[a, b, b + up, a + up], out, &|p| {
+            Vec2::new((p - a).dot(along), p.y)
+        });
+    }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// The font only has ASCII: anything else is a '?' per byte.

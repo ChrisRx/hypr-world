@@ -416,6 +416,7 @@ mod tests {
             )));
         app.world_mut().resource_mut::<House>().layout = Some(Layout::new(
             &[1],
+            &[],
             Vec2::new(1000.0, 600.0),
             work,
             &Default::default(),
