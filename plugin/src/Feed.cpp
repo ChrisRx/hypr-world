@@ -1,16 +1,15 @@
 #include "Feed.hpp"
 
 #include "App.hpp"
+#include "Compat.hpp"
 #include "Layers.hpp"
 #include "Server.hpp"
 #include "Share.hpp"
 #include "Util.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
@@ -70,8 +69,8 @@ void watch(const PHLWINDOW& window, uint64_t address) {
     };
 
     tree(window->wlSurface());
-    if (window->m_popupHead)
-        window->m_popupHead->breadthfirst(
+    if (const auto& popups = Compat::popupHead(window))
+        popups->breadthfirst(
             [&](SP<Desktop::View::CPopup> popup, void*) {
                 if (popup)
                     tree(popup->wlSurface());
@@ -94,9 +93,10 @@ void sendMonitor(const PHLMONITOR& monitor) {
 
 void sendWorkspaces(const PHLMONITOR& monitor) {
     std::map<int64_t, std::string> now;
-    for (const auto& workspace : State::workspaceState()->workspaces()) {
-        if (!workspace->m_isSpecialWorkspace && workspace->m_monitor.lock() == monitor)
-            now.emplace(workspace->m_id, workspace->m_name);
+    for (const auto& ref : State::workspaceState()->workspaces()) {
+        const auto workspace = ref.lock();
+        if (workspace && !Compat::isSpecial(workspace) && workspace->m_monitor.lock() == monitor)
+            now.emplace(Compat::id(workspace), Compat::name(workspace));
     }
 
     for (const auto& [id, name] : now) {
@@ -126,15 +126,15 @@ void sendWindows(const PHLMONITOR& monitor) {
             continue;
 
         const auto& workspace = window->m_workspace;
-        if (!workspace || workspace->m_isSpecialWorkspace || workspace->m_monitor.lock() != monitor)
+        if (!workspace || Compat::isSpecial(workspace) || workspace->m_monitor.lock() != monitor)
             continue;
 
         const auto pos  = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - origin;
         const auto size = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-        const char kind = Fullscreen::controller()->isFullscreen(window) ? 'F' : window->m_isFloating ? 'f' : 't';
+        const char kind = Fullscreen::controller()->isFullscreen(window) ? 'F' : Compat::isFloating(window) ? 'f' : 't';
 
         const auto address = reinterpret_cast<uint64_t>(window.get());
-        now.emplace(address, SWindow{.workspace = workspace->m_id, .x = px(pos.x), .y = px(pos.y), .w = px(size.x), .h = px(size.y), .stack = stack, .kind = kind});
+        now.emplace(address, SWindow{.workspace = Compat::id(workspace), .x = px(pos.x), .y = px(pos.y), .w = px(size.x), .h = px(size.y), .stack = stack, .kind = kind});
         watch(window, address);
     }
 

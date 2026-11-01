@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <format>
 #include <functional>
 #include <string>
 #include <utility>
@@ -25,14 +26,21 @@ inline void notify(HANDLE handle, const std::string& text, float timeMs, bool pr
                                      timeMs);
 }
 
+// A line in Hyprland's log, under the plugin's name. Formatted here: 0.57's
+// formatting log takes the caller's name first, 0.56's does not.
+template <typename... Args>
+void log(Hyprutils::CLI::eLogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+    Log::logger->log(level, "[hypr-world] " + std::format(fmt, std::forward<Args>(args)...));
+}
+
 // `body`, with anything it throws logged under `what` and stopped there.
 template <typename F>
 void guarded(const char* what, F&& body) {
     try {
         body();
     } catch (const std::exception& e) {
-        Log::logger->log(Log::ERR, "[hypr-world] {}: {}", what, e.what());
-    } catch (...) { Log::logger->log(Log::ERR, "[hypr-world] {}: unknown exception", what); }
+        log(Log::ERR, "{}: {}", what, e.what());
+    } catch (...) { log(Log::ERR, "{}: unknown exception", what); }
 }
 
 // `work` from the event loop, once however often it is asked for before it

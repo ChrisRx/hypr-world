@@ -1,12 +1,12 @@
 #include "Share.hpp"
 
 #include "App.hpp"
+#include "Compat.hpp"
 #include "Server.hpp"
 #include "Util.hpp"
 
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/XDGShell.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
@@ -210,8 +210,8 @@ bool drawn(const SP<CWLSurfaceResource>& surface) {
 // than that, and Hyprland shows only the part in the tile.
 CBox windowBox(const PHLWINDOW& window) {
     Vector2D corner;
-    if (const auto xdg = window->m_xdgSurface.lock(); xdg && !xdg->m_current.geometry.empty())
-        corner = xdg->m_current.geometry.pos();
+    if (const auto geometry = Compat::xdgGeometry(window); !geometry.empty())
+        corner = geometry.pos();
     return {corner, window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT)};
 }
 
@@ -251,10 +251,10 @@ std::optional<std::vector<SNode>> walk(const PHLWINDOW& window) {
     if (nodes.empty())
         return std::nullopt;
 
-    if (window->m_popupHead) {
-        window->m_popupHead->breadthfirst(
+    if (const auto& popups = Compat::popupHead(window)) {
+        popups->breadthfirst(
             [&](WP<Desktop::View::CPopup> popup, void*) {
-                if (!popup || !popup->aliveAndVisible() || !popup->wlSurface() || !popup->wlSurface()->resource())
+                if (!Compat::shown(popup) || !popup->wlSurface() || !popup->wlSurface()->resource())
                     return;
                 const Vector2D at = popup->coordsRelativeToParent();
                 popup->wlSurface()->resource()->breadthfirst(

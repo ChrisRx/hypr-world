@@ -1,5 +1,6 @@
 #include "Layers.hpp"
 
+#include "Compat.hpp"
 #include "Feed.hpp"
 #include "Server.hpp"
 #include "Util.hpp"
@@ -145,7 +146,7 @@ void tick(const PHLMONITOR& monitor, bool inView) {
     for (uint32_t level = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND; level <= ZWLR_LAYER_SHELL_V1_LAYER_TOP; ++level) {
         for (const auto& ref : monitor->m_layerSurfaceLayers[level]) {
             const auto layer = ref.lock();
-            if (!layer || !layer->visible())
+            if (!layer || !Compat::visible(layer))
                 continue;
 
             const auto pos = layer->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - origin;

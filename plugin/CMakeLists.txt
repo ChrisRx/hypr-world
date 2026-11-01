@@ -19,10 +19,18 @@ add_compile_options(-fno-gnu-unique)
 find_package(PkgConfig REQUIRED)
 # hyprland.pc is the compositor's own headers, and pulls in everything they
 # include (aquamarine, hyprutils, wayland-server, lua, ...).
-pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET hyprland pixman-1 libdrm xkbcommon)
+pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET hyprland>=0.56 pixman-1 libdrm xkbcommon)
+
+# The Hyprland version as one number, 0.57.0 as 5700, for what src/Compat.hpp
+# smooths over between the releases the plugin builds against.
+if(NOT DEPS_hyprland_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    message(FATAL_ERROR "cannot read the Hyprland version (${DEPS_hyprland_VERSION})")
+endif()
+math(EXPR HYPRLAND_VERSION_NUMBER "${CMAKE_MATCH_1} * 10000 + ${CMAKE_MATCH_2} * 100 + ${CMAKE_MATCH_3}")
 
 add_library(hypr-world SHARED
     src/main.cpp
+    src/Compat.cpp
     src/Input.cpp
     src/Server.cpp
     src/Deliver.cpp
@@ -40,7 +48,7 @@ set(HYPR_WORLD_APP "${CMAKE_CURRENT_SOURCE_DIR}/../target/release/hypr-world"
 cmake_path(NORMAL_PATH HYPR_WORLD_APP OUTPUT_VARIABLE HYPR_WORLD_APP_PATH)
 
 target_link_libraries(hypr-world PRIVATE PkgConfig::DEPS)
-target_compile_definitions(hypr-world PRIVATE HYPR_WORLD_APP="${HYPR_WORLD_APP_PATH}")
+target_compile_definitions(hypr-world PRIVATE HYPR_WORLD_APP="${HYPR_WORLD_APP_PATH}" HYPR_WORLD_HYPRLAND=${HYPRLAND_VERSION_NUMBER})
 target_compile_options(hypr-world PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 set_target_properties(hypr-world PROPERTIES

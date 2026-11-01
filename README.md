@@ -63,7 +63,9 @@ plugin/default.nix is given one), and says so when nothing is there.
 
 The plugin is built against the exact Hyprland the session runs (Hyprland
 refuses any other), which `plugin/dev.sh` takes from the nixos-config
-(`$NIXOS_CONFIG`, `/etc/nixos/nixos-config` by default). The plugin and the
+(`$NIXOS_CONFIG`, `/etc/nixos/nixos-config` by default). It builds against
+Hyprland 0.56 and 0.57: plugin/src/Compat.hpp holds what differs between
+them, picked by the version CMake finds. The plugin and the
 app speak a line protocol over a unix socket and must come from the same
 tree: on a version mismatch the plugin says so and the app exits.
 

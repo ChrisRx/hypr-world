@@ -1,14 +1,13 @@
 #include "Scanout.hpp"
 
 #include "App.hpp"
+#include "Compat.hpp"
 #include "Util.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FadingOutState.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/errorOverlay/Overlay.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -44,7 +43,7 @@ bool appAlone(Monitor::CMonitor* monitor) {
         return false;
     if (Fullscreen::controller()->getFullscreenModes(app).internal != Fullscreen::FSMODE_FULLSCREEN)
         return false;
-    if (app->effectiveAlpha() != 1.F || !app->opaque())
+    if (Compat::effectiveAlpha(app) != 1.F || !Compat::opaque(app))
         return false;
     if (app->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != monitor->m_size ||
         app->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != monitor->m_position || app->positionAnimation()->isBeingAnimated() ||
@@ -70,7 +69,7 @@ bool appAlone(Monitor::CMonitor* monitor) {
             return false;
     }
     for (const auto& window : Desktop::windowState()->windows()) {
-        if (window != app && window->m_isMapped && window->visible() && window->m_workspace == workspace)
+        if (window != app && Compat::mapped(window) && Compat::visible(window) && window->m_workspace == workspace)
             return false;
     }
     return true;
@@ -94,13 +93,13 @@ void init(HANDLE handle) {
     try {
         void* target = findFunction(handle, "recheckSolitary", "CMonitor::recheckSolitary(");
         if (!target) {
-            Log::logger->log(Log::WARN, "[hypr-world] CMonitor::recheckSolitary not found: the app stays composited");
+            log(Log::WARN, "CMonitor::recheckSolitary not found: the app stays composited");
             return;
         }
         g_hook = HyprlandAPI::createFunctionHook(handle, target, reinterpret_cast<void*>(&hkRecheckSolitary));
         if (!g_hook || !g_hook->hook() || !g_hook->m_original) {
             // Not x86_64, or the function did not take the hook.
-            Log::logger->log(Log::WARN, "[hypr-world] cannot hook CMonitor::recheckSolitary: the app stays composited");
+            log(Log::WARN, "cannot hook CMonitor::recheckSolitary: the app stays composited");
             if (g_hook)
                 HyprlandAPI::removeFunctionHook(handle, g_hook);
             g_hook = nullptr;

@@ -1,5 +1,6 @@
 #include "App.hpp"
 
+#include "Compat.hpp"
 #include "Feed.hpp"
 #include "Input.hpp"
 #include "Server.hpp"
@@ -8,20 +9,16 @@
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/config/supplementary/executor/Executor.hpp>
 #include <hyprland/src/debug/log/Logger.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
-#include <hyprland/src/helpers/MiscFunctions.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
-#include <hyprland/src/state/WorkspaceState.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -41,7 +38,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr const char* kSpecial = "special:hypr-world";
+constexpr const char* kSpecial = "hypr-world";
 
 // The app the world key launches when none is running, fixed when the plugin
 // is built (CMakeLists.txt, HYPR_WORLD_APP).
@@ -123,7 +120,7 @@ std::optional<SOpenOn> g_openOn;
 
 void check(const Config::Actions::ActionResult& result, const char* what) {
     if (!result)
-        Log::logger->log(Log::ERR, "[hypr-world] {}: {}", what, result.error().message);
+        log(Log::ERR, "{}: {}", what, result.error().message);
 }
 
 // World::later, with anything `work` throws logged as the app's.
@@ -142,25 +139,15 @@ bool passed(std::optional<Clock::time_point>& deadline, Clock::time_point now) {
 // special:hypr-world, created on `monitor` if it does not exist yet (with no
 // monitor, only looked up).
 PHLWORKSPACE specialWorkspace(const PHLMONITOR& monitor) {
-    const auto [id, name, isAutoID] = getWorkspaceIDNameFromString(kSpecial);
-    if (id == WORKSPACE_INVALID)
-        return nullptr;
-
-    if (auto workspace = State::workspaceState()->query().id(id).run())
-        return workspace;
-    if (!monitor)
-        return nullptr;
-    return State::workspaceState()->create(id, monitor->m_id, name);
+    return Compat::special(kSpecial, monitor);
 }
 
 // Workspace `id`, made on `monitor` if it does not exist yet and is a
 // numbered one.
 PHLWORKSPACE workspaceById(int64_t id, const PHLMONITOR& monitor) {
-    if (auto workspace = State::workspaceState()->query().id(id).run())
+    if (auto workspace = Compat::find(id))
         return workspace;
-    if (id <= 0)
-        return nullptr;
-    return State::workspaceState()->create(id, monitor->m_id, std::to_string(id));
+    return Compat::createNumbered(id, monitor);
 }
 
 // The monitor showing the app's special workspace, if any is.
@@ -205,7 +192,7 @@ void clearLive() {
 // `preferred` when that is on the workspace, else the window Hyprland would
 // focus there. Never the app's own window.
 void report(const PHLWORKSPACE& workspace, PHLWINDOW preferred = nullptr) {
-    if (!Server::connected() || !workspace || workspace->m_isSpecialWorkspace)
+    if (!Server::connected() || !workspace || Compat::isSpecial(workspace))
         return;
 
     auto window = preferred && Desktop::View::validMapped(preferred) && preferred->m_workspace == workspace ? preferred : workspace->getFocusCandidate();
@@ -213,9 +200,9 @@ void report(const PHLWORKSPACE& workspace, PHLWINDOW preferred = nullptr) {
         window = nullptr;
 
     if (window)
-        Server::send(std::format("workspace {} 0x{:x}", workspace->m_id, reinterpret_cast<uintptr_t>(window.get())));
+        Server::send(std::format("workspace {} 0x{:x}", Compat::id(workspace), reinterpret_cast<uintptr_t>(window.get())));
     else
-        Server::send(std::format("workspace {} -", workspace->m_id));
+        Server::send(std::format("workspace {} -", Compat::id(workspace)));
 }
 
 // The real bar crosses over with the app's own picture of it (Layers.hpp).
@@ -239,7 +226,7 @@ void crossBars() {
     for (const auto& ref : monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
         const auto layer = ref.lock();
         // One Hyprland raised over fullscreen windows stays as it has it.
-        if (!layer || layer->m_aboveFullscreen)
+        if (!layer || Compat::aboveFullscreen(layer))
             continue;
 
         auto& fade = layer->alpha()[Desktop::View::LS_ALPHA_FADE];
@@ -272,7 +259,7 @@ void setOpacity(float opacity) {
     if (!window)
         return;
 
-    window->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(g_opacity);
+    Compat::fadeAlpha(window)->setValueAndWarp(g_opacity);
     g_pHyprRenderer->damageWindow(window);
 }
 
@@ -482,7 +469,7 @@ void startListeners() {
         try {
             if (!window)
                 return;
-            if (g_showWhenReady && window->getPID() == Server::peerPid())
+            if (g_showWhenReady && Compat::pid(window) == Server::peerPid())
                 later(g_laterShow, showNow);
             else if (inView() && window->m_workspace && (window->m_workspace == specialWorkspace(nullptr) || openingOn(Clock::now()))) {
                 g_redirect.emplace_back(window);
@@ -536,7 +523,7 @@ PHLWINDOW window() {
         return nullptr;
 
     for (const auto& window : Desktop::windowState()->windows()) {
-        if (Desktop::View::validMapped(window) && window->getPID() == pid)
+        if (Desktop::View::validMapped(window) && Compat::pid(window) == pid)
             return window;
     }
     return nullptr;
@@ -659,13 +646,14 @@ std::vector<PHLWINDOW> live() {
 
 void showWorkspace(int64_t id) {
     // changeWorkspace keeps the app's special workspace open on top.
-    check(Config::Actions::changeWorkspace(std::to_string(id)), "changing workspace");
+    if (const auto selector = Compat::selector(id))
+        check(Config::Actions::changeWorkspace(*selector), "changing workspace");
 }
 
 void openOn(int64_t id, std::string_view command) {
     g_openOn = SOpenOn{.id = id, .until = Clock::now() + kOpenOnTimeout};
     if (!command.empty() && !Config::Supplementary::executor()->spawnRaw(std::string(command)))
-        Log::logger->log(Log::ERR, "[hypr-world] could not run the launcher: {}", command);
+        log(Log::ERR, "could not run the launcher: {}", command);
 }
 
 // The mapped window at `address`, never the app's own.

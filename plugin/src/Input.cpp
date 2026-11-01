@@ -1,21 +1,19 @@
 #include "Input.hpp"
 
+#include "Compat.hpp"
 #include "Deliver.hpp"
 #include "Server.hpp"
 #include "Util.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/event/EventBus.hpp>
-#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/output/Monitor.hpp>
@@ -253,7 +251,7 @@ std::unordered_map<uint32_t, bool> g_takenButtons;
 std::unordered_set<uint32_t> g_heldKeys;
 
 uint32_t modifiers() {
-    return g_pInputManager ? g_pInputManager->getModsFromAllKBs() : 0;
+    return Compat::modifiers();
 }
 
 bool isSuperKey(uint32_t keycode) {
@@ -261,13 +259,13 @@ bool isSuperKey(uint32_t keycode) {
 }
 
 bool superHeld(uint32_t mods) {
-    return (mods & HL_MODIFIER_META) || g_heldKeys.contains(KEY_LEFTMETA) || g_heldKeys.contains(KEY_RIGHTMETA);
+    return (mods & Compat::kModMeta) || g_heldKeys.contains(KEY_LEFTMETA) || g_heldKeys.contains(KEY_RIGHTMETA);
 }
 
 // Ctrl+Alt+F1..F12 always reach Hyprland, so a session can always be left.
 bool isVtSwitch(uint32_t keycode, uint32_t mods) {
     const bool fkey = (keycode >= KEY_F1 && keycode <= KEY_F10) || keycode == KEY_F11 || keycode == KEY_F12;
-    return fkey && (mods & HL_MODIFIER_CTRL) && (mods & HL_MODIFIER_ALT);
+    return fkey && (mods & Compat::kModCtrl) && (mods & Compat::kModAlt);
 }
 
 // --- aim and delivery -------------------------------------------------------
@@ -448,8 +446,7 @@ PHLWINDOW nextToType() {
 // (a launcher) would fire on the release. Shadowing the binds on keys still
 // held is what Hyprland itself does after a bind fires.
 void consumeChord() {
-    if (g_pKeybindManager)
-        g_pKeybindManager->shadowKeybinds();
+    Compat::shadowBinds();
 }
 
 // A layer surface that takes the keyboard, a launcher like rofi, has the
@@ -462,7 +459,7 @@ bool keyboardOnLayer() {
         return false;
     const auto surface = Desktop::View::CWLSurface::fromResource(focus);
     const auto layer   = surface ? Desktop::View::CLayerSurface::fromView(surface->view()) : nullptr;
-    return layer && layer->m_mapped && layer->m_interactivity != 0;
+    return layer && Compat::mapped(layer) && Compat::takesKeyboard(layer);
 }
 
 void onKey(IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {

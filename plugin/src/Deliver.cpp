@@ -1,9 +1,10 @@
 #include "Deliver.hpp"
 
+#include "Compat.hpp"
+
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 
@@ -31,12 +32,13 @@ Vector2D windowLocal(const PHLWINDOW& window, double u, double v, const Vector2D
     const double scale   = monitor && monitor->m_scale > 0 ? monitor->m_scale : 1.0;
 
     // The renderer still adds the floating offset with the position ignored.
-    return Vector2D{u * buffer.x / scale, v * buffer.y / scale} - window->m_floatingOffset;
+    return Vector2D{u * buffer.x / scale, v * buffer.y / scale} - Compat::floatingOffset(window);
 }
 
 std::optional<STarget> popupAt(const PHLWINDOW& window, const Vector2D& local) {
     // X11 windows have no xdg popups.
-    if (window->m_isX11 || !window->m_popupHead)
+    const auto& popups = Compat::popupHead(window);
+    if (Compat::isX11(window) || !popups)
         return std::nullopt;
 
     // By global position, as Hyprland's pointer path does. The main surface
@@ -44,7 +46,7 @@ std::optional<STarget> popupAt(const PHLWINDOW& window, const Vector2D& local) {
     const Vector2D origin = window->getWindowMainSurfaceBox().pos();
     const Vector2D global = origin + local;
 
-    const auto popup = window->m_popupHead->at(global, true);
+    const auto popup = popups->at(global, true);
     if (!popup || !popup->wlSurface())
         return std::nullopt;
     const auto surface = popup->wlSurface()->resource();
@@ -67,8 +69,8 @@ std::optional<STarget> resolve(const PHLWINDOW& window, const Vector2D& local) {
     // X11 windows have no xdg popups or hit-testable subsurfaces here (and
     // Hyprland's own windowSurfaceAt asserts on them): the main surface, in
     // the X server's scale.
-    if (window->m_isX11)
-        return STarget{main, {}, window->m_X11SurfaceScaledBy};
+    if (Compat::isX11(window))
+        return STarget{main, {}, Compat::x11Scale(window)};
 
     if (const auto popup = popupAt(window, local))
         return popup;

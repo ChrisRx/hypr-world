@@ -2,6 +2,7 @@
 // keyboard and mouse while it is open.
 
 #include "App.hpp"
+#include "Compat.hpp"
 #include "Feed.hpp"
 #include "Input.hpp"
 #include "Layers.hpp"
@@ -36,7 +37,7 @@ namespace World {
 namespace {
 
 HANDLE              g_handle = nullptr;
-SP<SHyprCtlCommand> g_hyprctl;
+SP<Compat::HyprCtlCommand> g_hyprctl;
 
 const char* stateName() {
     switch (Input::state()) {
@@ -267,7 +268,7 @@ int luaConfig(lua_State* L) {
 
 // `hyprctl hypr-world` prints the state; `hyprctl hypr-world off` is the
 // escape hatch from another terminal or an SSH session.
-std::string onHyprctl(eHyprCtlOutputFormat, std::string request) {
+std::string onHyprctl(const std::string& request) {
     try {
         const auto tokens = Protocol::tokens(request);
 
@@ -352,9 +353,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             !HyprlandAPI::addLuaFunction(g_handle, "hypr_world", "config", luaConfig))
             throw std::runtime_error("[hypr-world] cannot register hl.plugin.hypr_world.*");
 
-        g_hyprctl = HyprlandAPI::registerHyprCtlCommand(g_handle, SHyprCtlCommand{.name = "hypr-world", .exact = false, .fn = onHyprctl});
+        g_hyprctl = HyprlandAPI::registerHyprCtlCommand(g_handle, Compat::hyprctlCommand("hypr-world", onHyprctl));
 
-        Input::init(g_handle);
+        World::Input::init(g_handle);
         App::init(g_handle);
         // Optional: without it the app is only composited.
         Scanout::init(g_handle);
@@ -364,7 +365,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             throw std::runtime_error("[hypr-world] cannot start the socket");
 
         // Last: see Input::startListeners.
-        Input::startListeners();
+        World::Input::startListeners();
         App::startListeners();
     } catch (const std::exception&) {
         teardown();
