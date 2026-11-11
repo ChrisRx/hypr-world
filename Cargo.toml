@@ -25,11 +25,13 @@ bevy = { version = "0.20", default-features = false, features = [
     "jpeg",
     "png",
     # The rocket launcher's model, a glTF file of the user's own
-    # (launcher.rs), and the sound on the way in and out (sound.rs).
+    # (launcher.rs).
     "bevy_gltf",
-    "bevy_audio",
-    "wav",
 ] }
+# Sound, played with the output open only while something plays
+# (audio.rs), not through Bevy's audio, which holds it open for good. The
+# version Bevy 0.20 uses.
+rodio = { version = "0.22", default-features = false, features = ["playback", "hound", "tracing"] }
 # Physics: the player against the house. The release for Bevy 0.20.
 avian3d = { version = "0.8", default-features = false, features = ["3d", "parry-f32", "parallel"] }
 wayland-client = "0.31"

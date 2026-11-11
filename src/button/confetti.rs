@@ -11,7 +11,13 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use bevy::prelude::*;
 
 use super::{Pressed, Stand};
-use crate::{house::Pedestal, scene::glowing, stats::Redraw, wake::WakeAt};
+use crate::{
+    audio::{Play, Sound},
+    house::Pedestal,
+    scene::glowing,
+    stats::Redraw,
+    wake::WakeAt,
+};
 
 /// The blower: Pixabay's "partyblower" (226659), cut to the blow and made
 /// mono WAV, the one format the app's audio reads.
@@ -59,7 +65,7 @@ const COLORS: [Vec3; 8] = [
 /// The sound, a bit, and the bits' colors, made once.
 #[derive(Resource)]
 pub(super) struct Party {
-    sound: Handle<AudioSource>,
+    sound: Handle<Sound>,
     bit: Handle<Mesh>,
     colors: Vec<Handle<StandardMaterial>>,
 }
@@ -75,7 +81,7 @@ pub(super) struct Bit {
 
 pub(super) fn prepare(
     mut commands: Commands,
-    mut sounds: ResMut<Assets<AudioSource>>,
+    mut sounds: ResMut<Assets<Sound>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -91,7 +97,7 @@ pub(super) fn prepare(
         })
         .collect();
     commands.insert_resource(Party {
-        sound: sounds.add(AudioSource {
+        sound: sounds.add(Sound {
             bytes: BLOWER.into(),
         }),
         bit: meshes.add(Rectangle::new(1.0, 1.0)),
@@ -111,7 +117,7 @@ pub(super) fn celebrate(
     if pressed.read().count() == 0 {
         return;
     }
-    commands.spawn((AudioPlayer(party.sound.clone()), PlaybackSettings::DESPAWN));
+    commands.spawn(Play::once(party.sound.clone()));
     let Ok((Stand(pedestal), shell)) = stand.single() else {
         return;
     };

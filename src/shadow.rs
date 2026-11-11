@@ -16,7 +16,6 @@ use std::f32::consts::{PI, TAU};
 use avian3d::prelude::{Collider, ColliderDisabled, RigidBody};
 use bevy::{
     asset::RenderAssetUsages,
-    audio::{AudioSinkPlayback, Volume},
     camera::{RenderTarget, ScalingMode},
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     light::Skybox,
@@ -30,6 +29,7 @@ use bevy::{
 
 use crate::{
     FlyCamera, WorldSystems,
+    audio::{Play, Playing, Sound},
     flight::WorldState,
     glue::Desktop,
     layout::SCREEN_LIFT,
@@ -201,7 +201,7 @@ struct Drones(Option<Drone>);
 
 enum Drone {
     Making(Task<Vec<u8>>),
-    Made(Handle<AudioSource>),
+    Made(Handle<Sound>),
 }
 
 /// The realm's sound playing, on the void, and when it started.
@@ -718,7 +718,7 @@ fn hum(
     time: Res<Time>,
     wake: Res<Wake>,
     mut drones: ResMut<Drones>,
-    mut sources: ResMut<Assets<AudioSource>>,
+    mut sources: ResMut<Assets<Sound>>,
     void: Query<Entity, With<Void>>,
     hums: Query<(), With<Hum>>,
 ) {
@@ -740,7 +740,7 @@ fn hum(
         let Some(wav) = check_ready(task) else {
             return;
         };
-        *drone = Drone::Made(sources.add(AudioSource { bytes: wav.into() }));
+        *drone = Drone::Made(sources.add(Sound { bytes: wav.into() }));
     }
     let Drone::Made(sound) = drone else {
         return;
@@ -750,18 +750,17 @@ fn hum(
         Hum {
             since: time.elapsed_secs(),
         },
-        AudioPlayer(sound.clone()),
-        PlaybackSettings::LOOP.with_volume(Volume::SILENT),
+        Play::looped(sound.clone(), 0.0),
     ));
 }
 
 /// The sound coming up from nothing.
-fn fade_in(time: Res<Time>, mut hums: Query<(&Hum, &mut AudioSink)>, mut redraw: Redraw) {
-    for (hum, mut sink) in &mut hums {
+fn fade_in(time: Res<Time>, hums: Query<(&Hum, &Playing)>, mut redraw: Redraw) {
+    for (hum, playing) in &hums {
         let up = ((time.elapsed_secs() - hum.since) / HUM_FADE).min(1.0);
-        let volume = Volume::Linear(HUM_VOLUME * EaseFunction::SmoothStep.sample_clamped(up));
-        if sink.volume() != volume {
-            sink.set_volume(volume);
+        let volume = HUM_VOLUME * EaseFunction::SmoothStep.sample_clamped(up);
+        if playing.volume() != volume {
+            playing.set_volume(volume);
             // Updates to come up in, standing still or not.
             redraw.ask(["shadow"]);
         }
@@ -792,7 +791,7 @@ mod tests {
         .init_resource::<scene::WorkspaceIndex>()
         .init_resource::<House>()
         .init_resource::<crate::wake::Wake>()
-        .init_asset::<AudioSource>()
+        .init_asset::<Sound>()
         .init_asset::<Image>()
         .init_asset::<WarpMaterial>()
         .init_resource::<Desktop>()
