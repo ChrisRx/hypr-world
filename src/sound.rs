@@ -5,7 +5,12 @@
 
 use bevy::prelude::*;
 
-use crate::{WorldSystems, config::WorldConfig, flight::WorldState};
+use crate::{
+    WorldSystems,
+    audio::{Play, Sound},
+    config::WorldConfig,
+    flight::WorldState,
+};
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Chime>()
@@ -20,7 +25,7 @@ pub fn plugin(app: &mut App) {
 
 /// The sound, loaded, if the settings name one.
 #[derive(Resource, Default)]
-pub struct Chime(Option<Handle<AudioSource>>);
+pub struct Chime(Option<Handle<Sound>>);
 
 /// The file the settings name, wherever it is on disk, as the panorama is
 /// loaded (sky.rs): the load says it may read outside any asset folder.
@@ -36,7 +41,7 @@ fn load(config: Res<WorldConfig>, assets: Res<AssetServer>, mut chime: ResMut<Ch
 /// Once, on its own entity, which goes when it is done.
 fn play(mut commands: Commands, chime: Res<Chime>) {
     if let Some(sound) = &chime.0 {
-        commands.spawn((AudioPlayer(sound.clone()), PlaybackSettings::DESPAWN));
+        commands.spawn(Play::once(sound.clone()));
     }
 }
 
@@ -47,10 +52,7 @@ mod tests {
     use super::*;
 
     fn players(app: &mut App) -> usize {
-        app.world_mut()
-            .query::<&AudioPlayer>()
-            .iter(app.world())
-            .count()
+        app.world_mut().query::<&Play>().iter(app.world()).count()
     }
 
     /// Played once on each flight in and out, with a sound set, and never
@@ -59,7 +61,7 @@ mod tests {
     fn the_sound_plays_going_in_and_out() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, StatesPlugin, AssetPlugin::default()))
-            .init_asset::<AudioSource>()
+            .init_asset::<Sound>()
             .init_state::<WorldState>()
             .init_resource::<WorldConfig>()
             .add_plugins(plugin);

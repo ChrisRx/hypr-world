@@ -33,6 +33,7 @@
 //! opening the scene, and prints their size and timing, to check the capture
 //! side on its own.
 
+mod audio;
 mod button;
 mod camera;
 mod capture;
@@ -215,7 +216,7 @@ fn main() {
             sound::plugin,
             shadow::plugin,
         ))
-        .add_plugins(button::plugin)
+        .add_plugins((button::plugin, audio::plugin))
         // Drawing: the house's material, the windows' frames on the GPU,
         // drawing only on change, and the stats.
         .add_plugins((
