@@ -6,6 +6,7 @@
   makeWrapper,
   pkg-config,
   alsa-lib,
+  pipewire,
   libgbm,
   libxkbcommon,
   vulkan-loader,
@@ -63,10 +64,21 @@ rustPlatform.buildRustPackage {
   # The drivers the app loads are the ones in /run/opengl-driver alone. On
   # NixOS that is all the loader finds anyway; elsewhere it would also try
   # the distro's, built against a different glibc.
+  #
+  # The sound plays through ALSA's "default", which on a PipeWire system is
+  # the pipewire ALSA plugin (/etc/alsa/conf.d/99-pipewire-default.conf).
+  # alsa-lib here looks for plugins in its own store path, where there are
+  # none, so without ALSA_PLUGIN_DIR "default" fails to open and cpal falls
+  # back to a raw hw device (an HDMI output, say). Holding that directly,
+  # past PipeWire, the stream sticks in XRUN once the sink goes away (a
+  # monitor sleeping or unplugged) and cpal's output thread spins a core on
+  # it. NixOS's own ALSA config names the plugin by store path, so there
+  # this changes nothing. --set-default keeps a value already set.
   postFixup = ''
     patchelf --add-rpath ${lib.makeLibraryPath runtimeLibs} $out/bin/hypr-world
     wrapProgram $out/bin/hypr-world \
-      --set-default VK_DRIVER_FILES /run/opengl-driver/share/vulkan/icd.d
+      --set-default VK_DRIVER_FILES /run/opengl-driver/share/vulkan/icd.d \
+      --set-default ALSA_PLUGIN_DIR ${pipewire}/lib/alsa-lib
   '';
 
   meta = {
