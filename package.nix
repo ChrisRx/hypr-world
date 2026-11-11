@@ -72,7 +72,8 @@ rustPlatform.buildRustPackage {
   # back to a raw hw device (an HDMI output, say). Holding that directly,
   # past PipeWire, the stream sticks in XRUN once the sink goes away (a
   # monitor sleeping or unplugged) and cpal's output thread spins a core on
-  # it. NixOS sets ALSA_PLUGIN_DIR itself, hence --set-default.
+  # it. NixOS's own ALSA config names the plugin by store path, so there
+  # this changes nothing. --set-default keeps a value already set.
   postFixup = ''
     patchelf --add-rpath ${lib.makeLibraryPath runtimeLibs} $out/bin/hypr-world
     wrapProgram $out/bin/hypr-world \
